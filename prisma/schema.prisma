@@ -1,0 +1,919 @@
+// Healthcare Outreach Agent - core schema (Phase 2).
+// The research/AI/job models are included so future phases need no schema churn,
+// but Phase 2 only reads/writes the identity, org, clinic, contact, location,
+// lead-pipeline, activity, follow-up, suppression, and settings tables.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+// ---------------------------------------------------------------------------
+// Identity and tenancy (Auth.js + multi-org)
+// ---------------------------------------------------------------------------
+
+model User {
+  id                    String                @id @default(cuid())
+  name                  String?
+  email                 String                @unique
+  emailVerified         DateTime?
+  image                 String?
+  accounts              Account[]
+  sessions              Session[]
+  memberships           Membership[]
+  googleConnections     GoogleConnection[]
+  assignedFollowUps     FollowUpTask[]        @relation("FollowUpAssignee")
+  savedViews            SavedView[]
+  createdAt             DateTime              @default(now())
+  updatedAt             DateTime              @updatedAt
+  integrationActivities IntegrationActivity[]
+}
+
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String? @db.Text
+  access_token      String? @db.Text
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String? @db.Text
+  session_state     String?
+  user              User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+}
+
+enum Role {
+  OWNER
+  ADMIN
+  MEMBER
+  VIEWER
+}
+
+model Organization {
+  id                 String    @id @default(cuid())
+  name               String
+  // Company identity used in emails. Editable in Settings; never hardcoded.
+  companyName        String?
+  portfolioUrl       String?
+  contactUrl         String?
+  senderName         String?
+  senderEmail        String?
+  // KlearQ product information used when pitching KlearQ. Editable in Settings.
+  klearqProductName  String?
+  klearqTagline      String?
+  klearqUrl          String?
+  klearqCapabilities String[]
+  retentionDays      Int       @default(365)
+  complianceAckAt    DateTime?
+
+  memberships         Membership[]
+  campaigns           SearchCampaign[]
+  clinics             Clinic[]
+  settings            SystemSetting[]
+  suppression         SuppressionEntry[]
+  integrations        Integration[]
+  googleConnections   GoogleConnection[]
+  gmailDrafts         GmailDraftRecord[]
+  followUps           FollowUpTask[]
+  integrationActivity IntegrationActivity[]
+  jobs                ResearchJob[]
+  auditLogs           AuditLogEntry[]
+  savedViews          SavedView[]
+  retentionRuns       RetentionRun[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Membership {
+  id           String       @id @default(cuid())
+  userId       String
+  orgId        String
+  role         Role         @default(MEMBER)
+  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  organization Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  createdAt    DateTime     @default(now())
+
+  @@unique([userId, orgId])
+  @@index([orgId])
+}
+
+// Per-org OAuth connections (Gmail, Calendar). Tokens encrypted at rest.
+model Integration {
+  id              String       @id @default(cuid())
+  orgId           String
+  organization    Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  provider        String // "google_gmail" | "google_calendar"
+  accountEmail    String?
+  scopes          String[]
+  accessTokenEnc  String?
+  refreshTokenEnc String?
+  expiresAt       DateTime?
+  connectedById   String?
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+
+  @@unique([orgId, provider])
+}
+
+// ---------------------------------------------------------------------------
+// Campaigns
+// ---------------------------------------------------------------------------
+
+enum CampaignStatus {
+  DRAFT
+  RUNNING
+  PAUSED
+  COMPLETED
+  CANCELLED
+}
+
+model SearchCampaign {
+  id               String         @id @default(cuid())
+  orgId            String
+  organization     Organization   @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  name             String
+  categories       String[]
+  city             String?
+  region           String?
+  country          String?
+  radiusMeters     Int?
+  minLocations     Int            @default(1)
+  maxLeads         Int            @default(50)
+  requiredKeywords String[]
+  excludedKeywords String[]
+  status           CampaignStatus @default(DRAFT)
+  createdById      String?
+  clinics          Clinic[]
+  jobs             ResearchJob[]
+  followUps        FollowUpTask[]
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @updatedAt
+
+  @@index([orgId])
+}
+
+// ---------------------------------------------------------------------------
+// Clinic (the "lead") and related records
+// ---------------------------------------------------------------------------
+
+enum PipelineStage {
+  DISCOVERED
+  RESEARCHING
+  QUALIFIED
+  DRAFT_READY
+  NEEDS_REVIEW
+  APPROVED
+  GMAIL_DRAFT_CREATED
+  CONTACTED
+  REPLIED
+  MEETING_BOOKED
+  NOT_INTERESTED
+  FOLLOW_UP_LATER
+  DISQUALIFIED
+}
+
+enum LeadSource {
+  MANUAL
+  CSV_IMPORT
+  RESEARCH
+}
+
+model Clinic {
+  id               String          @id @default(cuid())
+  orgId            String
+  organization     Organization    @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  campaignId       String?
+  campaign         SearchCampaign? @relation(fields: [campaignId], references: [id], onDelete: SetNull)
+  name             String
+  category         String?
+  websiteUrl       String?
+  mainPhone        String?
+  publicEmail      String?
+  contactPageUrl   String?
+  bookingMethod    String?
+  onlineBookingUrl String?
+  socialLinks      Json?
+  businessHours    Json?
+  websiteTech      String[]
+  locationCount    Int             @default(1)
+  dedupeKey        String
+  // Normalized clinic name (see normalizeName) stored + indexed so soft-duplicate
+  // detection is a bounded indexed lookup, never a full-table scan into memory.
+  normalizedName   String          @default("")
+  stage            PipelineStage   @default(DISCOVERED)
+  leadSource       LeadSource      @default(MANUAL)
+  doNotContact     Boolean         @default(false)
+  isTestData       Boolean         @default(false)
+  followUpDate     DateTime?
+  collectedAt      DateTime?
+  lastResearchedAt DateTime?
+  lastAuditedAt    DateTime?
+
+  locations   ClinicLocation[]
+  contacts    Contact[]
+  audits      WebsiteAudit[]
+  scores      LeadScore[]
+  sources     Source[]
+  drafts      EmailDraft[]
+  gmailDrafts GmailDraftRecord[]
+  activities  OutreachActivity[]
+  followUps   FollowUpTask[]
+
+  createdById String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([orgId, dedupeKey])
+  @@index([orgId, stage])
+  @@index([orgId, createdAt])
+  @@index([orgId, normalizedName])
+}
+
+model ClinicLocation {
+  id          String   @id @default(cuid())
+  clinicId    String
+  clinic      Clinic   @relation(fields: [clinicId], references: [id], onDelete: Cascade)
+  label       String?
+  address     String?
+  phone       String?
+  hours       Json?
+  sourceUrl   String?
+  collectedAt DateTime @default(now())
+
+  @@index([clinicId])
+}
+
+enum EmailStatus {
+  UNKNOWN
+  VALID
+  INVALID
+  RISKY
+  UNVERIFIED
+}
+
+model Contact {
+  id              String      @id @default(cuid())
+  clinicId        String
+  clinic          Clinic      @relation(fields: [clinicId], references: [id], onDelete: Cascade)
+  name            String?
+  jobTitle        String?
+  email           String?
+  emailStatus     EmailStatus @default(UNKNOWN)
+  phone           String?
+  isDecisionMaker Boolean     @default(false)
+  sourceUrl       String?
+  collectedAt     DateTime    @default(now())
+
+  @@index([clinicId])
+}
+
+// ---------------------------------------------------------------------------
+// Website audit + findings (populated in Phase 3; modeled now)
+// ---------------------------------------------------------------------------
+
+model WebsiteAudit {
+  id                  String         @id @default(cuid())
+  clinicId            String
+  clinic              Clinic         @relation(fields: [clinicId], references: [id], onDelete: Cascade)
+  url                 String
+  performanceScore    Int?
+  lcpMs               Int?
+  cls                 Float?
+  mobileFriendly      Boolean?
+  httpsValid          Boolean?
+  screenshotKey       String?
+  screenshotMobileKey String?
+  // "completed" | "partial" | "failed" — audit outcome for partial-failure reporting.
+  status              String         @default("completed")
+  checkedAt           DateTime       @default(now())
+  findings            AuditFinding[]
+
+  // One current audit per clinic, so re-audits upsert rather than duplicate.
+  @@unique([clinicId])
+  @@index([clinicId])
+}
+
+// Opportunity area a finding belongs to. Doubles as the scoring category so a
+// rule's category and its evidence stay aligned (Website 0-30, Software 0-25,
+// KlearQ 0-25, Contactability 0-10, Business fit 0-10).
+enum FindingCategory {
+  WEBSITE
+  SOFTWARE
+  KLEARQ
+  CONTACTABILITY
+  BUSINESS_FIT
+}
+
+enum Confidence {
+  VERIFIED
+  STRONG_INFERENCE
+  WEAK_INFERENCE
+  UNKNOWN
+}
+
+model AuditFinding {
+  id                String          @id @default(cuid())
+  auditId           String
+  audit             WebsiteAudit    @relation(fields: [auditId], references: [id], onDelete: Cascade)
+  category          FindingCategory
+  // Machine-readable rule identifier (stable across runs) and the ruleset version
+  // that produced it. Manual findings use a unique `manual:<cuid>` code.
+  code              String
+  ruleVersion       String          @default("")
+  finding           String
+  evidence          String
+  sourceUrl         String
+  // Optional website sub-area for grouping (design | technical | conversion).
+  subarea           String?
+  checkedAt         DateTime        @default(now())
+  confidence        Confidence
+  // True only for VERIFIED facts; everything else is an inference.
+  isFact            Boolean         @default(false)
+  // Points this finding contributed to its category at last scoring.
+  scoreContribution Int             @default(0)
+  // Base points for a manual finding (auto findings derive points from the ruleset).
+  manualPoints      Int?
+  manual            Boolean         @default(false)
+  // Manual review: a finding can be dismissed (excluded from scoring) with a reason.
+  dismissed         Boolean         @default(false)
+  dismissedReason   String?
+  dismissedById     String?
+  dismissedAt       DateTime?
+  createdById       String?
+  createdAt         DateTime        @default(now())
+
+  // Deduplication / idempotency: one finding per rule code within an audit.
+  @@unique([auditId, code])
+  @@index([auditId])
+  @@index([code])
+}
+
+// ---------------------------------------------------------------------------
+// Scoring (Phase 3; modeled now)
+// ---------------------------------------------------------------------------
+
+enum RecommendedService {
+  WEBSITE
+  SOFTWARE
+  KLEARQ
+  COMBINED
+  NONE
+}
+
+// Overall confidence in a lead's score, from the mix of verified vs inferred
+// evidence behind it. Distinct from per-finding `Confidence`.
+enum ScoreConfidence {
+  HIGH
+  MEDIUM
+  LOW
+}
+
+model LeadScore {
+  id                   String             @id @default(cuid())
+  clinicId             String
+  clinic               Clinic             @relation(fields: [clinicId], references: [id], onDelete: Cascade)
+  websiteScore         Int
+  softwareScore        Int
+  klearqScore          Int
+  contactabilityScore  Int
+  businessFitScore     Int
+  overallScore         Int
+  recommendedService   RecommendedService
+  recommendationReason String?
+  confidence           ScoreConfidence    @default(LOW)
+  // Full explainable breakdown: per-category subtotals, each contributing rule
+  // (points, confidence multiplier, evidence, source), alternatives, uncertainties,
+  // and missing information. See src/lib/scoring/types.ts.
+  breakdown            Json
+  // Ruleset version that produced this score (deterministic re-scoring key).
+  weightsVersion       String
+  computedAt           DateTime           @default(now())
+
+  // Manual override (never silently erased by recalculation).
+  manualOverride  Boolean             @default(false)
+  overrideOverall Int?
+  overrideService RecommendedService?
+  overrideReason  String?
+  overrideById    String?
+  overrideAt      DateTime?
+
+  // One current score per clinic; re-scoring upserts it.
+  @@unique([clinicId])
+  @@index([clinicId])
+}
+
+model Source {
+  id          String   @id @default(cuid())
+  clinicId    String
+  clinic      Clinic   @relation(fields: [clinicId], references: [id], onDelete: Cascade)
+  url         String
+  type        String
+  retrievedAt DateTime @default(now())
+  notes       String?
+
+  @@index([clinicId])
+}
+
+// ---------------------------------------------------------------------------
+// Email drafts (Phase 4; modeled now)
+// ---------------------------------------------------------------------------
+
+enum DraftStatus {
+  GENERATED // freshly generated, awaiting review
+  EDITED // human-edited, back in review
+  BLOCKED // hallucination guard blocked it (unsupported / insufficient evidence)
+  APPROVED
+  REJECTED
+  SENT_EXTERNAL
+}
+
+// The current evidence-grounded email draft for a clinic (one per clinic; its
+// history lives in DraftVersion). Every field the drafting workflow must persist
+// is here: recipient + clinic identity, the pitched service, the body, the
+// prompt/model/provider, the evidence it is grounded in, the claim-to-evidence
+// mapping, warnings, confidence, status, version, and generation time.
+model EmailDraft {
+  id                      String             @id @default(cuid())
+  clinicId                String
+  clinic                  Clinic             @relation(fields: [clinicId], references: [id], onDelete: Cascade)
+  contactId               String?
+  // Snapshot of the exact clinic name used in the copy (name-preservation check).
+  clinicName              String             @default("")
+  service                 RecommendedService
+  // Stage A explanation for why this strategy was chosen, grounded in evidence.
+  strategyReason          String?
+  subject                 String
+  recipientName           String?
+  recipientEmail          String?
+  body                    String
+  // Evidence used: [{ findingId, code, category, claim, sourceUrl, confidence, isFact }].
+  personalizationEvidence Json
+  // Claim-to-evidence mapping from hallucination checking: [{ claim, code, supported }].
+  claimMap                Json?
+  // Stable ids + source URLs of the findings the draft is grounded in.
+  evidenceFindingIds      String[]
+  evidenceSourceUrls      String[]
+  confidence              Int
+  reviewWarnings          String[]
+  wordCount               Int?
+  status                  DraftStatus        @default(GENERATED)
+  // Why a draft is BLOCKED (insufficient or unsupported evidence).
+  blockedReason           String?
+  version                 Int                @default(1)
+  aiModel                 String?
+  aiProvider              String?
+  promptVersion           String?
+  gmailDraftId            String?
+  editedBody              String?
+  generatedAt             DateTime           @default(now())
+  createdById             String?
+  approvedById            String?
+  approvedAt              DateTime?
+  rejectedById            String?
+  rejectedAt              DateTime?
+  rejectedReason          String?
+  versions                DraftVersion[]
+  gmailDrafts             GmailDraftRecord[]
+  createdAt               DateTime           @default(now())
+  updatedAt               DateTime           @updatedAt
+
+  // One current draft per clinic; regeneration bumps `version` and snapshots the
+  // prior content into DraftVersion, so retries never create duplicate drafts.
+  @@unique([clinicId])
+  @@index([clinicId])
+}
+
+// Immutable snapshot of a draft at each meaningful change (generate, regenerate,
+// edit, approve, reject, restore). Enables version history, comparison, restore,
+// and an approval record (final content + evidence set + user + timestamp).
+model DraftVersion {
+  id                      String             @id @default(cuid())
+  draftId                 String
+  draft                   EmailDraft         @relation(fields: [draftId], references: [id], onDelete: Cascade)
+  version                 Int
+  service                 RecommendedService
+  subject                 String
+  body                    String
+  confidence              Int
+  reviewWarnings          String[]
+  personalizationEvidence Json
+  claimMap                Json?
+  status                  DraftStatus
+  aiModel                 String?
+  aiProvider              String?
+  promptVersion           String?
+  // What produced this version: generated | regenerated | edited | approved | rejected | restored.
+  changeType              String
+  reason                  String?
+  createdById             String?
+  createdByName           String?
+  createdAt               DateTime           @default(now())
+
+  @@unique([draftId, version])
+  @@index([draftId])
+}
+
+// ---------------------------------------------------------------------------
+// Activity + follow-ups (used in Phase 2)
+// ---------------------------------------------------------------------------
+
+enum ActivityType {
+  LEAD_CREATED
+  LEAD_UPDATED
+  LEAD_IMPORTED
+  RESEARCH_COMPLETED
+  DRAFT_GENERATED
+  DRAFT_EDITED
+  DRAFT_APPROVED
+  DRAFT_REJECTED
+  GMAIL_DRAFT_CREATED
+  GMAIL_DRAFT_FAILED
+  MARKED_CONTACTED
+  REPLY_RECORDED
+  MEETING_BOOKED
+  NOTE_ADDED
+  STAGE_CHANGED
+  FOLLOW_UP_SCHEDULED
+  FOLLOW_UP_COMPLETED
+  FOLLOW_UP_CANCELLED
+  CALENDAR_EVENT_CREATED
+  GOOGLE_CONNECTED
+  GOOGLE_DISCONNECTED
+  DO_NOT_CONTACT_SET
+}
+
+model OutreachActivity {
+  id        String       @id @default(cuid())
+  clinicId  String
+  clinic    Clinic       @relation(fields: [clinicId], references: [id], onDelete: Cascade)
+  type      ActivityType
+  note      String?
+  metadata  Json?
+  actorId   String?
+  actorName String?
+  createdAt DateTime     @default(now())
+
+  @@index([clinicId, createdAt])
+}
+
+enum FollowUpStatus {
+  PENDING
+  COMPLETED
+  CANCELLED
+}
+
+enum FollowUpPriority {
+  LOW
+  MEDIUM
+  HIGH
+}
+
+model FollowUpTask {
+  id          String           @id @default(cuid())
+  orgId       String
+  clinicId    String
+  clinic      Clinic           @relation(fields: [clinicId], references: [id], onDelete: Cascade)
+  campaignId  String?
+  campaign    SearchCampaign?  @relation(fields: [campaignId], references: [id], onDelete: SetNull)
+  title       String?
+  dueDate     DateTime
+  note        String?
+  priority    FollowUpPriority @default(MEDIUM)
+  status      FollowUpStatus   @default(PENDING)
+  // Kept in sync with status (done = COMPLETED) for backwards-compatible reads.
+  done        Boolean          @default(false)
+  assigneeId  String?
+  assignee    User?            @relation("FollowUpAssignee", fields: [assigneeId], references: [id], onDelete: SetNull)
+  completedAt DateTime?
+  cancelledAt DateTime?
+  createdById String?
+
+  // Optional Google Calendar sync (idempotent: one event per task).
+  calendarEventId      String?
+  calendarConnectionId String?
+  calendarConnection   GoogleConnection? @relation(fields: [calendarConnectionId], references: [id], onDelete: SetNull)
+  calendarSyncedAt     DateTime?
+  calendarStatus       String? // "created" | "cancelled" | "error"
+
+  organization Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
+
+  @@index([clinicId, dueDate])
+  @@index([orgId, status, dueDate])
+  @@index([assigneeId, status])
+}
+
+// ---------------------------------------------------------------------------
+// Suppression, settings, jobs, errors
+// ---------------------------------------------------------------------------
+
+model SuppressionEntry {
+  id            String       @id @default(cuid())
+  orgId         String
+  organization  Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  emailOrDomain String
+  reason        String?
+  createdById   String?
+  createdAt     DateTime     @default(now())
+
+  @@unique([orgId, emailOrDomain])
+}
+
+model SystemSetting {
+  id           String       @id @default(cuid())
+  orgId        String
+  organization Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  key          String
+  value        Json
+  updatedAt    DateTime     @updatedAt
+
+  @@unique([orgId, key])
+}
+
+enum JobStatus {
+  QUEUED
+  RUNNING
+  PAUSED
+  SUCCEEDED
+  FAILED
+  CANCELLED
+  PARTIAL
+}
+
+model ResearchJob {
+  id              String          @id @default(cuid())
+  orgId           String
+  organization    Organization    @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  campaignId      String?
+  campaign        SearchCampaign? @relation(fields: [campaignId], references: [id], onDelete: SetNull)
+  type            String
+  status          JobStatus       @default(QUEUED)
+  progress        Int             @default(0)
+  total           Int?
+  processed       Int             @default(0)
+  succeeded       Int             @default(0)
+  failed          Int             @default(0)
+  cancelRequested Boolean         @default(false)
+  pauseRequested  Boolean         @default(false)
+  message         String?
+  runnerRef       String?
+  startedAt       DateTime?
+  finishedAt      DateTime?
+  errors          ErrorLog[]
+  createdAt       DateTime        @default(now())
+
+  @@index([orgId, status])
+}
+
+model ErrorLog {
+  id        String       @id @default(cuid())
+  jobId     String?
+  job       ResearchJob? @relation(fields: [jobId], references: [id], onDelete: SetNull)
+  scope     String
+  targetUrl String?
+  message   String
+  stack     String?
+  retryable Boolean      @default(true)
+  createdAt DateTime     @default(now())
+
+  @@index([jobId])
+}
+
+// ---------------------------------------------------------------------------
+// Immutable audit log for manual scoring/finding changes (Phase 4)
+// ---------------------------------------------------------------------------
+
+enum AuditLogAction {
+  FINDING_DISMISSED
+  FINDING_RESTORED
+  FINDING_ADDED
+  SCORE_OVERRIDDEN
+  SCORE_OVERRIDE_CLEARED
+  SCORING_RULES_UPDATED
+  SCORE_RECALCULATED
+}
+
+// Append-only record of every manual change to findings, scores, or scoring
+// rules. Never updated or deleted, so it is a tamper-evident history.
+model AuditLogEntry {
+  id            String         @id @default(cuid())
+  orgId         String
+  organization  Organization   @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  clinicId      String?
+  action        AuditLogAction
+  entityType    String // "finding" | "score" | "scoring_rules"
+  entityId      String?
+  previousValue Json?
+  newValue      Json?
+  reason        String
+  actorId       String?
+  actorName     String?
+  createdAt     DateTime       @default(now())
+
+  @@index([orgId, createdAt])
+  @@index([clinicId, createdAt])
+}
+
+// ---------------------------------------------------------------------------
+// Google integrations (Phase 6): per-user OAuth connections, Gmail drafts,
+// and an immutable integration activity log.
+// ---------------------------------------------------------------------------
+
+// A user's Google OAuth connection WITHIN an organization. Connections are
+// per-user (not one unrestricted org-wide token); an org may mark at most one
+// connection as its authorized default sender. Access/refresh tokens are
+// encrypted at rest (AES-256-GCM via TOKEN_ENCRYPTION_KEY) and never returned
+// to the client or written to logs. Least-privilege scopes only.
+model GoogleConnection {
+  id              String       @id @default(cuid())
+  orgId           String
+  organization    Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  userId          String
+  user            User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  // Stable Google account id (id_token `sub`) + the account email, for display.
+  googleSub       String?
+  accountEmail    String?
+  scopes          String[]
+  accessTokenEnc  String?
+  refreshTokenEnc String?
+  // Access-token expiry (UTC). Refreshed transparently before API calls.
+  expiresAt       DateTime?
+  isDefaultSender Boolean      @default(false)
+  revokedAt       DateTime?
+  connectedById   String?
+  connectedAt     DateTime     @default(now())
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+
+  gmailDrafts   GmailDraftRecord[]
+  calendarTasks FollowUpTask[]
+
+  // One Google connection per user per org.
+  @@unique([orgId, userId])
+  @@index([orgId])
+}
+
+enum GmailDraftStatus {
+  PENDING
+  CREATED
+  FAILED
+}
+
+// A Gmail draft created from an APPROVED EmailDraft. Idempotent: at most one
+// record per (EmailDraft, approved version), so repeated requests never create
+// duplicate Gmail drafts. Editing an approved draft bumps the EmailDraft version
+// and requires re-approval before another Gmail draft can be created.
+model GmailDraftRecord {
+  id              String            @id @default(cuid())
+  orgId           String
+  organization    Organization      @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  clinicId        String
+  clinic          Clinic            @relation(fields: [clinicId], references: [id], onDelete: Cascade)
+  emailDraftId    String
+  emailDraft      EmailDraft        @relation(fields: [emailDraftId], references: [id], onDelete: Cascade)
+  // The EmailDraft.version this Gmail draft was created from (idempotency key).
+  sourceVersion   Int
+  connectionId    String?
+  connection      GoogleConnection? @relation(fields: [connectionId], references: [id], onDelete: SetNull)
+  connectionEmail String?
+  gmailDraftId    String? // Google draft id (present when status = CREATED)
+  gmailMessageId  String?
+  recipientEmail  String
+  subject         String
+  status          GmailDraftStatus  @default(PENDING)
+  error           String?
+  createdById     String?
+  createdByName   String?
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+
+  @@unique([emailDraftId, sourceVersion])
+  @@index([clinicId])
+  @@index([orgId])
+}
+
+// Append-only, immutable record of integration-affecting events: OAuth
+// connect/disconnect/refresh, Gmail draft creation, follow-up changes,
+// suppression blocks, and integration errors. Never contains tokens.
+enum IntegrationEventType {
+  GOOGLE_CONNECTED
+  GOOGLE_RECONNECTED
+  GOOGLE_DISCONNECTED
+  GOOGLE_TOKEN_REFRESHED
+  GOOGLE_DEFAULT_SENDER_SET
+  GMAIL_DRAFT_CREATED
+  GMAIL_DRAFT_FAILED
+  CALENDAR_EVENT_CREATED
+  CALENDAR_EVENT_UPDATED
+  CALENDAR_EVENT_CANCELLED
+  FOLLOW_UP_CREATED
+  FOLLOW_UP_UPDATED
+  FOLLOW_UP_COMPLETED
+  FOLLOW_UP_CANCELLED
+  SUPPRESSION_BLOCKED
+  INTEGRATION_ERROR
+}
+
+model IntegrationActivity {
+  id           String               @id @default(cuid())
+  orgId        String
+  organization Organization         @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  userId       String?
+  user         User?                @relation(fields: [userId], references: [id], onDelete: SetNull)
+  clinicId     String?
+  type         IntegrationEventType
+  provider     String? // "google" | "gmail" | "calendar"
+  summary      String
+  // Non-sensitive context only (ids, emails, counts). Tokens are NEVER stored.
+  metadata     Json?
+  createdAt    DateTime             @default(now())
+
+  @@index([orgId, createdAt])
+}
+
+// ---------------------------------------------------------------------------
+// Saved views (Phase 7): a user's reusable lead-table filter preset.
+// ---------------------------------------------------------------------------
+
+// A named lead-table filter preset, saved per user within an organization.
+// `params` is the encoded lead-table query string (e.g. "stage=QUALIFIED&minScore=60").
+model SavedView {
+  id           String       @id @default(cuid())
+  orgId        String
+  organization Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  userId       String
+  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name         String
+  params       String
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
+
+  // A user cannot have two views with the same name in the same org.
+  @@unique([orgId, userId, name])
+  @@index([orgId, userId])
+}
+
+// ---------------------------------------------------------------------------
+// Data retention (Phase 7): immutable record of each purge run (dry-run or real).
+// ---------------------------------------------------------------------------
+
+enum RetentionRunStatus {
+  DRY_RUN
+  COMPLETED
+  FAILED
+}
+
+// Append-only audit record of a data-retention purge. A dry run records what
+// WOULD be purged without deleting anything. Active/engaged records are always
+// protected (see src/lib/retention/retention.ts). Never updated after finish.
+model RetentionRun {
+  id               String             @id @default(cuid())
+  orgId            String
+  organization     Organization       @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  status           RetentionRunStatus
+  dryRun           Boolean            @default(true)
+  retentionDays    Int
+  cutoff           DateTime
+  // Counts of what was (or, for a dry run, would be) purged, by entity type.
+  clinicsPurged    Int                @default(0)
+  jobsPurged       Int                @default(0)
+  errorLogsPurged  Int                @default(0)
+  // Records skipped because they are active/engaged (active-record protection).
+  protectedSkipped Int                @default(0)
+  batches          Int                @default(0)
+  message          String?
+  actorId          String?
+  actorName        String?
+  startedAt        DateTime           @default(now())
+  finishedAt       DateTime?
+
+  @@index([orgId, startedAt])
+}

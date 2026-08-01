@@ -46,8 +46,11 @@ describe("purgeableClinicWhere", () => {
     expect(where.updatedAt).toEqual({ lt: cutoff });
     expect(where.doNotContact).toBe(false);
     expect(where.stage).toEqual({ in: PURGEABLE_STAGES });
-    // Approved/sent drafts, created Gmail drafts, and pending follow-ups all protect a lead.
-    expect(where.drafts).toEqual({ none: { status: { in: ["APPROVED", "SENT_EXTERNAL"] } } });
+    // Drafts in play (awaiting review or approved/sent), created Gmail drafts,
+    // and pending follow-ups all protect a lead.
+    expect(where.drafts).toEqual({
+      none: { status: { in: ["GENERATED", "EDITED", "APPROVED", "SENT_EXTERNAL"] } },
+    });
     expect(where.gmailDrafts).toEqual({ none: {} });
     expect(where.followUps).toEqual({ none: { status: "PENDING" } });
   });

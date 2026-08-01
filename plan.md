@@ -1171,6 +1171,22 @@ Production hardening built on the completed Phases 2-6. No provider was faked; c
 
 **Limitations.** Retention has a single per-org day window (not per-entity policies); the scheduled cron only fires where Inngest is configured (production) — locally use the manual controls; saved views are per-user (no org-shared views yet). The live-Google Gmail-draft operational test remains PENDING without OAuth test credentials.
 
+## Final Production Audit (findings + fixes)
+
+A two-track adversarial review (security + correctness) was run over the whole app. No critical issues. Fixed:
+
+- **SSRF (HIGH), `url-guard.ts` + `providers/fetcher.ts`.** The target guard was purely lexical (no DNS), so a hostname resolving to internal space (`metadata.google.internal`, `*.nip.io`, a CNAME into RFC-1918) bypassed it, and redirects were auto-followed without per-hop re-validation. Fixed by (a) `assertSafeUrlResolved` which resolves DNS and rejects if ANY resolved address is private/reserved/loopback/link-local (new `isBlockedIp` covers IPv4, IPv6, and IPv4-mapped IPv6), and (b) switching the fetcher to **manual redirects** — each hop (incl. robots.txt) is DNS-validated before the request, capped at 5 hops, and an SSRF block is non-retryable. Tests added (`isBlockedIp` + DNS-mocked `assertSafeUrlResolved`).
+- **Dedupe-key divergence (HIGH), `leads/actions.ts` updateLead.** Edit recomputed `dedupeKey` without the primary address (create/import include it), so editing a website-less lead dropped the address component and could spuriously collide on the unique key. Fixed by loading the primary location and mirroring create/import.
+- **CSV import resilience (MED).** Each `clinic.create` in the import loop now catches P2002 as a skipped duplicate, so a concurrent race can't abort a partially-committed import.
+- **Bulk-draft query (MED).** Target loader now `select`s only the fields `effectiveServiceOf` needs instead of `include`ing the full `LeadScore` (avoids loading the large `breakdown` JSON per clinic).
+- **Calendar cancel (LOW).** Clearing `calendarEventId` on cancel so a later re-sync creates a fresh event instead of updating a deleted one.
+- **Retention protection (LOW).** Un-reviewed drafts (`GENERATED`/`EDITED`) now also protect a lead from purge, so no un-reviewed work is silently deleted.
+- **Loading state (LOW).** Added `settings/loading.tsx`.
+
+Reviewed and confirmed correct (no change needed): OAuth signed+cookie-bound state with constant-time compare + freshness; AES-256-GCM token encryption, tokens never returned/logged (`toPublicConnection` strips them); Zod validation on every action/route; rate/cost caps (per-domain limiter, body/timeout caps, Places page cap, bulk 500 cap, retention batch cap); auth middleware matcher; no `dangerouslySetInnerHTML`/`eval`; evidence integrity (citable-only, override-never-evidence, loss-claim gating); idempotency (Gmail per-version, calendar per-event, `saveClinic` transaction + P2002→duplicate); dashboard effective-override count queries; migration additivity + backfill fidelity.
+
+Documented limitations (not defects; deferred by design): the research pre-scan `existingDedupeKeys(orgId)` loads the org's dedupe keys once per campaign run (the DB unique constraint is the real backstop; bounding needs a discovery refactor); `rescoreCampaign` runs synchronously (fine for bounded campaigns; move to a durable job at scale); the Inngest endpoint relies on the Inngest SDK's signature verification plus the `chooseRunner` production gate for fail-closed behavior; retention can leave already-orphaned `ErrorLog` rows (no org link) uncleaned; saved-view active-highlight uses exact query-string equality. Defense-in-depth opportunity: add `orgId` predicates inside `rescore.ts`/`calendar.ts`/`research/repository.ts` helpers.
+
 ## Requirement Traceability Matrix
 
 Every major requirement block mapped to where it is handled.

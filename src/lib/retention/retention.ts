@@ -86,8 +86,21 @@ export function purgeableClinicWhere(orgId: string, cutoff: Date): Prisma.Clinic
     updatedAt: { lt: cutoff },
     stage: { in: PURGEABLE_STAGES },
     doNotContact: false,
-    // Never purge a lead with an approved/sent draft or a created Gmail draft.
-    drafts: { none: { status: { in: [DraftStatus.APPROVED, DraftStatus.SENT_EXTERNAL] } } },
+    // Never purge a lead that holds a draft still in play: awaiting review
+    // (generated/edited) or approved/sent. Only rejected/blocked/no-draft leads
+    // are eligible, so un-reviewed work is never silently deleted.
+    drafts: {
+      none: {
+        status: {
+          in: [
+            DraftStatus.GENERATED,
+            DraftStatus.EDITED,
+            DraftStatus.APPROVED,
+            DraftStatus.SENT_EXTERNAL,
+          ],
+        },
+      },
+    },
     gmailDrafts: { none: {} },
     // Never purge a lead with an outstanding follow-up.
     followUps: { none: { status: FollowUpStatus.PENDING } },

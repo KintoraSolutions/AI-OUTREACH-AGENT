@@ -172,7 +172,19 @@ export async function updateLead(
     return { ok: false, error: "Please fix the errors below.", fieldErrors: fieldErrorsFromZod(parsed.error) };
   }
   const d = parsed.data;
-  const dedupeKey = computeDedupeKey({ name: d.name, websiteUrl: d.websiteUrl });
+  // Mirror create/import: include the primary address so the dedupe key stays
+  // stable for website-less leads (otherwise an edit would drop the address
+  // component and could collide with another same-name lead).
+  const primaryLocation = await prisma.clinicLocation.findFirst({
+    where: { clinicId },
+    orderBy: { collectedAt: "asc" },
+    select: { address: true },
+  });
+  const dedupeKey = computeDedupeKey({
+    name: d.name,
+    websiteUrl: d.websiteUrl,
+    primaryAddress: primaryLocation?.address,
+  });
 
   try {
     await prisma.clinic.update({
@@ -570,7 +582,8 @@ export async function importLeadsCsv(_prev: FormState, formData: FormData): Prom
     }
     seenKeys.add(key);
 
-    await prisma.clinic.create({
+    try {
+      await prisma.clinic.create({
       data: {
         orgId: ctx.orgId,
         name: r.name,
@@ -610,8 +623,18 @@ export async function importLeadsCsv(_prev: FormState, formData: FormData): Prom
           ],
         },
       },
-    });
-    created++;
+      });
+      created++;
+    } catch (e) {
+      // A concurrent import may have created the same clinic; the DB unique
+      // constraint is the backstop. Treat it as a skipped duplicate rather than
+      // a fatal error, so one race never aborts the whole import.
+      if (isUniqueViolation(e)) {
+        duplicates++;
+        continue;
+      }
+      throw e;
+    }
   }
 
   revalidatePath("/leads");

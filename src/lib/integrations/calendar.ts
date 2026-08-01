@@ -143,9 +143,11 @@ export async function cancelFollowUpCalendar(
     const api = deps.apiClient ?? new HttpGoogleApiClient(deps.fetchImpl);
     await api.cancelCalendarEvent(accessToken, task.calendarEventId);
 
+    // Clear the stored event id so a later re-sync creates a fresh event rather
+    // than trying to update the now-deleted one.
     await prisma.followUpTask.update({
       where: { id: task.id },
-      data: { calendarStatus: "cancelled", calendarSyncedAt: new Date() },
+      data: { calendarEventId: null, calendarStatus: "cancelled", calendarSyncedAt: new Date() },
     });
     await logIntegrationActivity({
       orgId: task.orgId,

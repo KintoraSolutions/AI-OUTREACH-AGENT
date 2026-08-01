@@ -116,6 +116,14 @@ These exercise real external providers. Where credentials are not configured, th
 
 Redirect URIs to register in Google Cloud: `{NEXTAUTH_URL}/api/auth/callback/google` (sign-in) and `{NEXTAUTH_URL}/api/integrations/google/callback` (integrations).
 
+## Deployment (Vercel + Neon + Inngest)
+
+- **Database (Neon Postgres).** Set `DATABASE_URL` to the pooled connection string (serverless) and `DIRECT_URL` to the direct string (used by migrations). Migrations are applied automatically on deploy: Vercel runs the `vercel-build` script (`prisma generate && prisma migrate deploy && next build`), so `next build` locally/CI stays database-free while production always ships the current schema. Rollback: `prisma migrate resolve --rolled-back <migration>` plus a redeploy of the previous build; all Phase 7 migrations are additive.
+- **Secrets.** Set all environment variables in Vercel (Preview + Production): `AUTH_SECRET`, `NEXTAUTH_URL`, `GOOGLE_CLIENT_ID/SECRET`, `TOKEN_ENCRYPTION_KEY`, `ANTHROPIC_API_KEY`, `GOOGLE_PLACES_API_KEY`, `PAGESPEED_API_KEY`, and `INNGEST_EVENT_KEY/SIGNING_KEY`. None are committed. Rotate `TOKEN_ENCRYPTION_KEY` only with a re-consent of Google connections (existing encrypted tokens cannot be decrypted with a new key).
+- **Background jobs & cron (Inngest).** Connect the Inngest app to `POST /api/inngest` and set the event/signing keys. Inngest is **required in production** — the app refuses to run research/bulk jobs without it rather than using the in-process runner. The daily retention purge (`retention-purge` cron) fires only when Inngest is connected.
+- **Providers.** Anthropic, Google OAuth/Gmail/Calendar, Google Places, and PageSpeed are all optional; unconfigured providers report as unavailable rather than faking data. Gmail/Calendar are sensitive scopes needing Google verification for production (test users during development).
+- **Do not** enable automatic email sending; the app creates Gmail drafts only.
+
 ## Scripts
 
 | Script | Purpose |

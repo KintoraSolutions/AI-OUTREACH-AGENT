@@ -6,8 +6,13 @@ import {
   parseRobots,
   RESEARCH_USER_AGENT,
 } from "@/lib/research/robots";
-import { assertSafeUrl } from "@/lib/research/url-guard";
+import { assertSafeUrl, assertSafeUrlResolved } from "@/lib/research/url-guard";
 import type { FetchResult, WebsiteFetcher } from "@/lib/research/types";
+
+// Redirects are followed manually so each hop can be re-validated against the
+// SSRF guard before a request is issued. A public site therefore cannot bounce
+// the crawler to an internal target, and the chain is bounded.
+const MAX_REDIRECTS = 5;
 
 /**
  * Real website fetcher built on the platform `fetch`. It is free (no external
@@ -64,7 +69,7 @@ export class HttpWebsiteFetcher implements WebsiteFetcher {
     let allowed: (path: string) => boolean = () => true;
     try {
       await this.limiter.wait(host);
-      const res = await this.withTimeout(`${origin}/robots.txt`);
+      const res = await this.fetchSafe(`${origin}/robots.txt`);
       if (res.ok) {
         const text = (await res.text()).slice(0, 500_000);
         const rules = parseRobots(text);
@@ -81,18 +86,40 @@ export class HttpWebsiteFetcher implements WebsiteFetcher {
     return allowed;
   }
 
-  private async withTimeout(url: string): Promise<Response> {
+  /**
+   * Fetch `rawUrl`, following redirects MANUALLY so every hop (including the
+   * initial URL) is DNS-resolved and re-validated by the SSRF guard before a
+   * request is issued. Caps the redirect chain and shares one timeout across it.
+   */
+  private async fetchSafe(rawUrl: string): Promise<Response> {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), this.timeoutMs);
     try {
-      return await this.fetchImpl(url, {
-        redirect: "follow",
-        signal: controller.signal,
-        headers: {
-          "User-Agent": RESEARCH_USER_AGENT,
-          Accept: "text/html,application/xhtml+xml",
-        },
-      });
+      let current = (await assertSafeUrlResolved(rawUrl)).toString();
+      for (let hop = 0; ; hop++) {
+        const res = await this.fetchImpl(current, {
+          redirect: "manual",
+          signal: controller.signal,
+          headers: {
+            "User-Agent": RESEARCH_USER_AGENT,
+            Accept: "text/html,application/xhtml+xml",
+          },
+        });
+
+        const location = res.headers.get("location");
+        const isRedirect = res.status >= 300 && res.status < 400 && !!location;
+        if (!isRedirect) return res;
+
+        if (hop >= MAX_REDIRECTS) {
+          throw new NonRecoverableError("unsafe_url", `Too many redirects from ${rawUrl}.`);
+        }
+        // Resolve the target relative to the current URL and re-validate it
+        // (DNS-aware) BEFORE following, so a redirect cannot reach internal space.
+        const next = new URL(location!, current).toString();
+        await assertSafeUrlResolved(next);
+        await res.body?.cancel().catch(() => {});
+        current = next;
+      }
     } finally {
       clearTimeout(timer);
     }
@@ -115,13 +142,13 @@ export class HttpWebsiteFetcher implements WebsiteFetcher {
 
     let res: Response;
     try {
-      res = await this.withTimeout(url.toString());
+      res = await this.fetchSafe(url.toString());
     } catch (e) {
+      // An SSRF/target-safety block must not be retried or masked as a transient
+      // network error; re-throw it as-is. Everything else is a transient failure.
+      if (e instanceof NonRecoverableError) throw e;
       throw new RecoverableError(`Network error fetching ${rawUrl}`, { cause: e });
     }
-
-    // The final URL after redirects must still be a safe, public target.
-    assertSafeUrl(res.url || url.toString());
 
     if (res.status === 401 || res.status === 403) {
       throw new NonRecoverableError("access_blocked", `Access blocked (${res.status}) at ${host}.`);

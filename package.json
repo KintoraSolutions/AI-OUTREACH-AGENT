@@ -13,6 +13,8 @@
     "db:generate": "prisma generate",
     "db:push": "prisma db push",
     "db:migrate": "prisma migrate dev",
+    "db:deploy": "prisma migrate deploy",
+    "vercel-build": "prisma generate && prisma migrate deploy && next build",
     "db:seed": "tsx prisma/seed.ts",
     "db:studio": "prisma studio",
     "db:local": "node scripts/local-postgres.mjs",

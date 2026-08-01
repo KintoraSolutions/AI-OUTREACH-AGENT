@@ -298,7 +298,23 @@ export class PrismaDraftJobRepository implements DraftJobRepository {
     // Qualified leads: scored, an effective service other than NONE, contactable.
     const clinics = await prisma.clinic.findMany({
       where: { orgId: job.orgId, campaignId: job.campaignId, doNotContact: false, scores: { some: {} } },
-      include: { scores: { take: 1, orderBy: { computedAt: "desc" } } },
+      // Select only what effectiveServiceOf needs; avoid loading the large
+      // LeadScore.breakdown JSON for every clinic in the campaign.
+      select: {
+        id: true,
+        scores: {
+          take: 1,
+          orderBy: { computedAt: "desc" },
+          select: {
+            recommendedService: true,
+            manualOverride: true,
+            overrideOverall: true,
+            overrideService: true,
+            overallScore: true,
+            confidence: true,
+          },
+        },
+      },
       orderBy: { createdAt: "asc" },
     });
 

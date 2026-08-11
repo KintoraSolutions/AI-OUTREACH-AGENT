@@ -30,18 +30,16 @@ export default async function SignInPage({
   }
 
   return (
-    <main className="flex min-h-screen items-center justify-center bg-muted/30 px-4">
+    <main className="flex min-h-screen items-center justify-center px-4">
       <div className="w-full max-w-sm">
-        <div className="mb-6 flex items-center gap-2">
-          <div className="flex size-8 items-center justify-center rounded-md bg-primary text-primary-foreground">
-            <ShieldCheck className="size-4" />
-          </div>
-          <span className="text-sm font-semibold">Healthcare Outreach Agent</span>
+        <div className="mb-6 flex items-center justify-center gap-2">
+          <ShieldCheck className="size-6 text-foreground" strokeWidth={1.75} />
+          <span className="text-[16px] font-semibold tracking-[-0.01em]">Outreach Agent</span>
         </div>
 
-        <div className="rounded-lg border bg-card p-6 shadow-sm">
-          <h1 className="text-lg font-semibold">Sign in</h1>
-          <p className="mt-1 text-sm text-muted-foreground">
+        <div className="glass-strong rounded-[12px] p-7">
+          <h1 className="text-[22px] font-semibold tracking-[-0.02em]">Sign in</h1>
+          <p className="mt-1.5 text-[15px] text-muted-foreground">
             Access your organization&apos;s lead research and outreach workspace.
           </p>
 

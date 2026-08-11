@@ -6,6 +6,7 @@ import {
   Role,
   RecommendedService,
   ScoreConfidence,
+  LeadSource,
 } from "@prisma/client";
 import { prisma } from "@/lib/db";
 import { requireOrgContext, roleAtLeast } from "@/lib/auth/rbac";
@@ -16,6 +17,7 @@ import { EmptyState } from "@/components/app/empty-state";
 import { LeadFilters } from "@/components/app/lead-filters";
 import { SavedViews } from "@/components/app/saved-views";
 import { LeadTable, type LeadRow } from "@/components/app/lead-table";
+import { PipelineHealth, type PipelineHealthData } from "@/components/app/pipeline-health";
 
 const PAGE_SIZE = 25;
 const CONTACTED_STAGES: PipelineStage[] = [
@@ -38,6 +40,39 @@ interface SearchParams {
   finding?: string;
   audit?: string;
   auditedSince?: string;
+  range?: string;
+  leadSource?: string;
+}
+
+/** Map a date-range preset to a `createdAt >=` lower bound (null = all time). */
+function rangeSince(range?: string): Date | null {
+  if (!range) return null;
+  const d = new Date();
+  switch (range) {
+    case "7d":
+      d.setDate(d.getDate() - 7);
+      return d;
+    case "30d":
+      d.setDate(d.getDate() - 30);
+      return d;
+    case "90d":
+      d.setDate(d.getDate() - 90);
+      return d;
+    case "12m":
+      d.setMonth(d.getMonth() - 12);
+      return d;
+    default:
+      return null;
+  }
+}
+
+/** Monday 00:00 (local) of the week containing `d`. */
+function startOfWeek(d: Date): Date {
+  const x = new Date(d);
+  x.setHours(0, 0, 0, 0);
+  const day = (x.getDay() + 6) % 7; // Monday = 0
+  x.setDate(x.getDate() - day);
+  return x;
 }
 
 function buildOrderBy(sort?: string): Prisma.ClinicOrderByWithRelationInput {
@@ -69,6 +104,9 @@ export default async function LeadsPage({
   const where: Prisma.ClinicWhereInput = { orgId: ctx.orgId };
   if (!sp.test) where.isTestData = false;
   if (sp.category) where.category = sp.category;
+  if (sp.leadSource && (LEAD_SOURCE_VALUES as string[]).includes(sp.leadSource)) {
+    where.leadSource = sp.leadSource as LeadSource;
+  }
   if (sp.stage && (STAGE_VALUES as string[]).includes(sp.stage)) {
     where.stage = sp.stage as PipelineStage;
   }
@@ -114,6 +152,9 @@ export default async function LeadsPage({
     const since = new Date(sp.auditedSince);
     if (!Number.isNaN(since.getTime())) where.lastAuditedAt = { gte: since };
   }
+
+  const createdSince = rangeSince(sp.range);
+  if (createdSince) where.createdAt = { gte: createdSince };
 
   if (and.length > 0) where.AND = and;
 
@@ -186,19 +227,77 @@ export default async function LeadsPage({
     };
   });
 
+  // ---- Pipeline Health KPIs -------------------------------------------------
+  // Scoped to the org and the test-data toggle only (NOT the search/score
+  // filters), so the strip reflects overall pipeline health, not the query.
+  const baseWhere: Prisma.ClinicWhereInput = { orgId: ctx.orgId };
+  if (!sp.test) baseWhere.isTestData = false;
+
+  const WEEKS = 8;
+  const windowStart = startOfWeek(new Date());
+  windowStart.setDate(windowStart.getDate() - 7 * (WEEKS - 1));
+
+  const strongWhere = buildEffectiveScoreWhere({ minScore: 70 });
+  const [kpiTotal, kpiStrong, kpiContacted, recentCreated] = await Promise.all([
+    prisma.clinic.count({ where: baseWhere }),
+    prisma.clinic.count({
+      where: strongWhere ? { ...baseWhere, scores: { some: strongWhere } } : baseWhere,
+    }),
+    prisma.clinic.count({ where: { ...baseWhere, stage: { in: CONTACTED_STAGES } } }),
+    prisma.clinic.findMany({
+      where: { ...baseWhere, createdAt: { gte: windowStart } },
+      select: { createdAt: true },
+    }),
+  ]);
+
+  // Bucket the last 8 weeks of new leads (bounded query) into a weekly series.
+  const weekStarts: number[] = [];
+  for (let i = 0; i < WEEKS; i++) {
+    const w = new Date(windowStart);
+    w.setDate(w.getDate() + 7 * i);
+    weekStarts.push(w.getTime());
+  }
+  const newSeries = new Array(WEEKS).fill(0) as number[];
+  for (const c of recentCreated) {
+    const idx = weekStarts.indexOf(startOfWeek(new Date(c.createdAt)).getTime());
+    if (idx >= 0) newSeries[idx] = (newSeries[idx] ?? 0) + 1;
+  }
+  const before = kpiTotal - recentCreated.length;
+  let running = before;
+  const totalSeries = newSeries.map((n) => (running += n));
+  const newThisWeek = newSeries[WEEKS - 1] ?? 0;
+  const newTrend = newThisWeek - (newSeries[WEEKS - 2] ?? 0);
+
+  const health: PipelineHealthData = {
+    totalLeads: kpiTotal,
+    totalSeries,
+    strongLeads: kpiStrong,
+    strongShare: kpiTotal > 0 ? (kpiStrong / kpiTotal) * 100 : 0,
+    conversion: kpiTotal > 0 ? (kpiContacted / kpiTotal) * 100 : 0,
+    newThisWeek,
+    newSeries,
+    newTrend,
+  };
+
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
   const exportParams = new URLSearchParams();
   for (const [k, v] of Object.entries(sp)) if (v && k !== "page") exportParams.set(k, v);
   const hasAnyLeads = total > 0 || Boolean(sp.q || sp.category || sp.stage);
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
       <PageHeader
         title="Leads"
         description="Clinics in your outreach pipeline."
         actions={
           canEdit ? (
             <>
+              <Button asChild size="sm">
+                <Link href="/leads/new">
+                  <Plus className="size-4" />
+                  New lead
+                </Link>
+              </Button>
               <Button asChild variant="outline" size="sm">
                 <Link href={`/api/leads/export?${exportParams.toString()}`}>
                   <Download className="size-4" />
@@ -211,20 +310,16 @@ export default async function LeadsPage({
                   Import
                 </Link>
               </Button>
-              <Button asChild size="sm">
-                <Link href="/leads/new">
-                  <Plus className="size-4" />
-                  New lead
-                </Link>
-              </Button>
             </>
           ) : null
         }
       />
 
+      <LeadFilters />
+
       <SavedViews views={savedViews} />
 
-      <LeadFilters />
+      <PipelineHealth data={health} />
 
       {rows.length === 0 ? (
         hasAnyLeads ? (
@@ -273,6 +368,7 @@ export default async function LeadsPage({
 const STAGE_VALUES = Object.values(PipelineStage);
 const SERVICE_VALUES = Object.values(RecommendedService);
 const CONFIDENCE_VALUES = Object.values(ScoreConfidence);
+const LEAD_SOURCE_VALUES = Object.values(LeadSource);
 
 function PagerLink({
   disabled,

@@ -47,7 +47,7 @@ export function MobileNav() {
           <div className="fixed inset-0 z-30" aria-hidden="true" onClick={() => setOpen(false)} />
           <div
             id="mobile-nav-panel"
-            className="absolute left-0 top-full z-40 mt-2 w-56 rounded-md border bg-background shadow-md"
+            className="glass-strong absolute left-0 top-full z-40 mt-2 w-56 rounded-[10px]"
             onClick={() => setOpen(false)}
           >
             <SidebarNav />

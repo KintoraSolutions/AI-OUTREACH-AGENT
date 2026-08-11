@@ -3,16 +3,16 @@ import { cva, type VariantProps } from "class-variance-authority";
 import { cn } from "@/lib/utils";
 
 const alertVariants = cva(
-  "relative w-full rounded-lg border px-4 py-3 text-sm [&>svg]:absolute [&>svg]:left-4 [&>svg]:top-4 [&>svg]:size-4 [&>svg~*]:pl-7",
+  "relative w-full rounded-[10px] border px-4 py-3.5 text-sm [&>svg]:absolute [&>svg]:left-4 [&>svg]:top-4 [&>svg]:size-4 [&>svg~*]:pl-7",
   {
     variants: {
       variant: {
-        default: "bg-card text-card-foreground",
+        default: "glass text-card-foreground",
         warning:
-          "border-amber-300 bg-amber-50 text-amber-900 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-200 [&>svg]:text-amber-600",
+          "border-[color-mix(in_srgb,var(--amber)_40%,transparent)] bg-[var(--amber-dim)] text-[var(--amber-bright)] [&>svg]:text-[var(--amber)]",
         destructive:
-          "border-destructive/40 bg-destructive/5 text-destructive [&>svg]:text-destructive",
-        info: "border-blue-300 bg-blue-50 text-blue-900 dark:border-blue-900 dark:bg-blue-950/40 dark:text-blue-200 [&>svg]:text-blue-600",
+          "border-[color-mix(in_srgb,var(--red)_40%,transparent)] bg-[var(--red-dim)] text-[var(--red-bright)] [&>svg]:text-[var(--red)]",
+        info: "border-[color-mix(in_srgb,var(--cyan)_40%,transparent)] bg-[var(--cyan-dim)] text-[var(--cyan-bright)] [&>svg]:text-[var(--cyan)]",
       },
     },
     defaultVariants: { variant: "default" },

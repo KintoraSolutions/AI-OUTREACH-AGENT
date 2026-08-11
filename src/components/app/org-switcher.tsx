@@ -34,15 +34,15 @@ export function OrgSwitcher({ activeOrgId, activeOrgName, memberships }: OrgSwit
   return (
     <DropdownMenu>
       <DropdownMenuTrigger
-        className="flex w-full items-center justify-between gap-2 rounded-md border px-3 py-2 text-sm hover:bg-muted disabled:opacity-60"
+        className="flex w-full items-center justify-between gap-2 rounded-[7px] border px-2.5 py-1.5 text-[13px] hover:bg-muted disabled:opacity-60"
         disabled={pending || memberships.length <= 1}
       >
         <span className="flex min-w-0 items-center gap-2">
-          <Building2 className="size-4 shrink-0 text-muted-foreground" />
+          <Building2 className="size-[15px] shrink-0 text-muted-foreground" strokeWidth={1.75} />
           <span className="truncate font-medium">{activeOrgName}</span>
         </span>
         {memberships.length > 1 ? (
-          <ChevronsUpDown className="size-4 shrink-0 text-muted-foreground" />
+          <ChevronsUpDown className="size-[15px] shrink-0 text-muted-foreground" />
         ) : null}
       </DropdownMenuTrigger>
       <DropdownMenuContent align="start" className="w-56">

@@ -95,11 +95,13 @@ export function ScoreCard({
         <div className="flex flex-wrap items-end gap-4">
           <div>
             <div className="flex items-baseline gap-1">
-              <span className="text-4xl font-semibold tabular-nums">{overall}</span>
-              <span className="text-sm text-muted-foreground">/ 100</span>
+              <span className="stat text-[44px] font-medium leading-none text-[var(--mint)] [text-shadow:0_0_20px_rgba(61,220,151,0.4)]">
+                {overall}
+              </span>
+              <span className="stat text-sm text-muted-foreground">/ 100</span>
             </div>
             {view.manualOverride ? (
-              <p className="text-xs text-amber-600">
+              <p className="text-xs text-[var(--amber)]">
                 Overridden{view.overrideOverall !== null ? ` (computed ${view.overallScore})` : ""}
               </p>
             ) : null}
@@ -122,10 +124,13 @@ export function ScoreCard({
             return (
               <div key={cat} className="grid grid-cols-[8rem_1fr_3rem] items-center gap-3">
                 <dt className="text-xs text-muted-foreground">{FINDING_CATEGORY_LABELS[cat]}</dt>
-                <dd className="h-2 overflow-hidden rounded-full bg-muted">
-                  <div className="h-full rounded-full bg-primary" style={{ width: `${pct}%` }} />
+                <dd className="h-2 overflow-hidden rounded-full bg-[var(--surface-3)]">
+                  <div
+                    className="h-full rounded-full bg-[var(--mint)] shadow-[0_0_8px_rgba(61,220,151,0.4)]"
+                    style={{ width: `${pct}%` }}
+                  />
                 </dd>
-                <dd className="text-right text-xs tabular-nums">
+                <dd className="stat text-right text-xs text-foreground">
                   {subtotal}/{cap}
                 </dd>
               </div>

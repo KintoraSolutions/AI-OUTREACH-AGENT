@@ -48,7 +48,7 @@ const items: NavItem[] = [
 export function SidebarNav() {
   const pathname = usePathname();
   return (
-    <nav className="flex flex-col gap-1 px-3 py-2">
+    <nav className="flex flex-col gap-0.5 px-2.5 py-1.5">
       {items.map((item) => {
         const active = item.match(pathname);
         const Icon = item.icon;
@@ -57,14 +57,17 @@ export function SidebarNav() {
             key={item.href}
             href={item.href}
             className={cn(
-              "flex items-center gap-2.5 rounded-md px-3 py-2 text-sm font-medium transition-colors",
+              "flex h-[41px] items-center gap-2.5 rounded-[7px] px-2.5 text-[14px] transition-colors",
               active
-                ? "bg-secondary text-secondary-foreground"
-                : "text-muted-foreground hover:bg-muted hover:text-foreground",
+                ? "bg-[var(--mint-dim)] font-medium text-[var(--mint)]"
+                : "font-normal text-muted-foreground hover:bg-[var(--muted)] hover:text-foreground",
             )}
             aria-current={active ? "page" : undefined}
           >
-            <Icon className="size-4" />
+            <Icon
+              className={cn("size-[17px] shrink-0", active ? "text-[var(--mint)]" : "")}
+              strokeWidth={1.75}
+            />
             {item.label}
           </Link>
         );

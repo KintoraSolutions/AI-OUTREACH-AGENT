@@ -19,6 +19,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Select } from "@/components/ui/select";
 import { StageSelect } from "@/components/app/stage-select";
+import { Radar } from "@/components/app/charts";
 import {
   SCORE_CONFIDENCE_TONES,
   SERVICE_LABELS,
@@ -27,6 +28,7 @@ import {
   STAGE_ORDER,
 } from "@/lib/leads/constants";
 import { formatDate } from "@/lib/format";
+import { cn } from "@/lib/utils";
 import { bulkSetStage, bulkSetDoNotContact } from "@/app/(dashboard)/leads/actions";
 
 const CONF_SHORT: Record<ScoreConfidence, string> = { HIGH: "High", MEDIUM: "Med", LOW: "Low" };
@@ -54,11 +56,23 @@ export interface LeadRow {
   duplicateCandidate: boolean;
 }
 
-function Num({ value }: { value: number | null }) {
-  return value === null ? (
-    <span className="text-muted-foreground">—</span>
-  ) : (
-    <span className="tabular-nums">{value}</span>
+/** Compact numeric fallback for the radar (small screens). */
+function ProfileNumbers({ row }: { row: LeadRow }) {
+  const dims: [string, number | null][] = [
+    ["W", row.websiteScore],
+    ["S", row.softwareScore],
+    ["K", row.klearqScore],
+    ["C", row.contactabilityScore],
+    ["F", row.businessFitScore],
+  ];
+  return (
+    <div className="flex flex-wrap gap-x-2 gap-y-0.5 text-[11px] tabular-nums text-muted-foreground">
+      {dims.map(([k, v]) => (
+        <span key={k}>
+          <span className="text-[var(--faint-foreground)]">{k}</span> {v ?? "—"}
+        </span>
+      ))}
+    </div>
   );
 }
 
@@ -112,9 +126,9 @@ export function LeadTable({ rows, canEdit }: { rows: LeadRow[]; canEdit: boolean
   }
 
   return (
-    <div className="space-y-3">
+    <div className="space-y-2.5">
       {canEdit && selected.size > 0 ? (
-        <div className="flex flex-wrap items-center gap-2 rounded-md border bg-muted/40 px-3 py-2 text-sm">
+        <div className="flex flex-wrap items-center gap-2 rounded-[7px] border border-[var(--hairline)] bg-[var(--surface-2)] px-3 py-2 text-sm">
           <span className="font-medium">{selected.size} selected</span>
           <span className="text-muted-foreground">Set stage to</span>
           <Select
@@ -141,8 +155,8 @@ export function LeadTable({ rows, canEdit }: { rows: LeadRow[]; canEdit: boolean
         </div>
       ) : null}
 
-      <div className="overflow-x-auto rounded-lg border">
-        <Table>
+      <div className="overflow-x-auto rounded-[8px] border border-[var(--hairline)] [&_td]:px-2.5 [&_td]:py-2 [&_th]:h-9 [&_th]:px-2.5">
+        <Table className="text-[13px]">
           <TableHeader>
             <TableRow>
               {canEdit ? (
@@ -151,14 +165,9 @@ export function LeadTable({ rows, canEdit }: { rows: LeadRow[]; canEdit: boolean
                 </TableHead>
               ) : null}
               <TableHead>Clinic</TableHead>
-              <TableHead className="text-right">Overall</TableHead>
-              <TableHead className="text-right" title="Website">Web</TableHead>
-              <TableHead className="text-right" title="Custom software">SW</TableHead>
-              <TableHead className="text-right" title="KlearQ">KQ</TableHead>
-              <TableHead className="text-right" title="Contactability">Con</TableHead>
-              <TableHead className="text-right" title="Business fit">Fit</TableHead>
-              <TableHead>Service</TableHead>
-              <TableHead>Confidence</TableHead>
+              <TableHead className="text-center">Overall</TableHead>
+              <TableHead className="text-center">Performance profile</TableHead>
+              <TableHead>Service &amp; confidence</TableHead>
               <TableHead className="text-right">Findings</TableHead>
               <TableHead>Stage</TableHead>
               <TableHead>Audited</TableHead>
@@ -176,57 +185,119 @@ export function LeadTable({ rows, canEdit }: { rows: LeadRow[]; canEdit: boolean
                     />
                   </TableCell>
                 ) : null}
-                <TableCell>
-                  <div className="flex flex-col">
-                    <Link href={`/leads/${row.id}`} className="font-medium hover:underline">
-                      {row.name}
-                    </Link>
-                    <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                      {row.category ?? "Uncategorized"}
-                      {row.isTestData ? <Badge tone="neutral">Test</Badge> : null}
-                      {row.duplicateCandidate ? (
-                        <span className="inline-flex items-center gap-0.5 text-amber-600" title="Another lead shares a similar name">
-                          <AlertTriangle className="size-3" />
-                          Possible duplicate
-                        </span>
-                      ) : null}
-                    </span>
+
+                {/* Clinic: name / category / address */}
+                <TableCell className="max-w-[260px]">
+                  <Link href={`/leads/${row.id}`} className="block truncate font-medium hover:underline">
+                    {row.name}
+                  </Link>
+                  <div className="mt-0.5 flex items-center gap-1.5 text-[11px] text-muted-foreground">
+                    <span className="truncate">{row.category ?? "Uncategorized"}</span>
+                    {row.isTestData ? <Badge tone="neutral">Test</Badge> : null}
+                    {row.duplicateCandidate ? (
+                      <span
+                        className="inline-flex shrink-0 items-center gap-0.5 text-[var(--amber)]"
+                        title="Another lead shares a similar name"
+                      >
+                        <AlertTriangle className="size-3" />
+                        Dup?
+                      </span>
+                    ) : null}
                   </div>
+                  {row.location ? (
+                    <div className="mt-0.5 truncate text-[11px] text-[var(--faint-foreground)]">
+                      {row.location}
+                    </div>
+                  ) : null}
                 </TableCell>
-                <TableCell className="text-right text-sm font-medium">
+
+                {/* Overall score */}
+                <TableCell className="text-center">
                   {row.overallScore === null ? (
                     <span className="text-muted-foreground">—</span>
                   ) : (
-                    <span className="inline-flex items-center gap-1">
-                      <span className="tabular-nums">{row.overallScore}</span>
-                      {row.manualOverride ? <span title="Manual override" className="text-amber-600">*</span> : null}
+                    <span className="inline-flex items-baseline gap-0.5">
+                      <span
+                        className={cn(
+                          "text-[18px] font-semibold tabular-nums",
+                          row.overallScore >= 80
+                            ? "text-[var(--mint)]"
+                            : row.overallScore >= 60
+                              ? "text-foreground"
+                              : "text-muted-foreground",
+                        )}
+                      >
+                        {row.overallScore}
+                      </span>
+                      {row.manualOverride ? (
+                        <span title="Manual override" className="text-[var(--amber)]">
+                          *
+                        </span>
+                      ) : null}
                     </span>
                   )}
                 </TableCell>
-                <TableCell className="text-right text-sm"><Num value={row.websiteScore} /></TableCell>
-                <TableCell className="text-right text-sm"><Num value={row.softwareScore} /></TableCell>
-                <TableCell className="text-right text-sm"><Num value={row.klearqScore} /></TableCell>
-                <TableCell className="text-right text-sm"><Num value={row.contactabilityScore} /></TableCell>
-                <TableCell className="text-right text-sm"><Num value={row.businessFitScore} /></TableCell>
-                <TableCell className="text-sm">
-                  {row.recommendedService ? (
-                    <Badge tone={SERVICE_TONES[row.recommendedService]}>{SERVICE_LABELS[row.recommendedService]}</Badge>
-                  ) : (
-                    <span className="text-muted-foreground">—</span>
-                  )}
-                </TableCell>
-                <TableCell className="text-sm">
-                  {row.confidence ? (
-                    <Badge tone={SCORE_CONFIDENCE_TONES[row.confidence]}>{CONF_SHORT[row.confidence]}</Badge>
-                  ) : (
-                    <span className="text-muted-foreground">—</span>
-                  )}
-                </TableCell>
-                <TableCell className="text-right text-sm text-muted-foreground">{row.findingCount || "—"}</TableCell>
+
+                {/* Performance profile: radar (md+) / numbers (small) */}
                 <TableCell>
-                  {canEdit ? <StageSelect clinicId={row.id} stage={row.stage} /> : STAGE_LABELS[row.stage]}
+                  <div className="hidden justify-center md:flex">
+                    <Radar
+                      size={62}
+                      values={[
+                        { label: "WEB", value: row.websiteScore },
+                        { label: "SW", value: row.softwareScore },
+                        { label: "KQ", value: row.klearqScore },
+                        { label: "CON", value: row.contactabilityScore },
+                        { label: "FIT", value: row.businessFitScore },
+                      ]}
+                    />
+                  </div>
+                  <div className="md:hidden">
+                    <ProfileNumbers row={row} />
+                  </div>
                 </TableCell>
-                <TableCell className="text-sm text-muted-foreground">{formatDate(row.lastAuditedAt)}</TableCell>
+
+                {/* Service & confidence tags */}
+                <TableCell>
+                  <div className="flex flex-wrap items-center gap-1">
+                    {row.recommendedService ? (
+                      <Badge tone={SERVICE_TONES[row.recommendedService]}>
+                        {SERVICE_LABELS[row.recommendedService]}
+                      </Badge>
+                    ) : (
+                      <span className="text-muted-foreground">—</span>
+                    )}
+                    {row.confidence ? (
+                      <Badge tone={SCORE_CONFIDENCE_TONES[row.confidence]}>
+                        {CONF_SHORT[row.confidence]}
+                      </Badge>
+                    ) : null}
+                  </div>
+                </TableCell>
+
+                {/* Findings */}
+                <TableCell className="text-right">
+                  <Link
+                    href={`/leads/${row.id}`}
+                    className="text-[12px] tabular-nums text-muted-foreground hover:text-foreground hover:underline"
+                  >
+                    {row.findingCount} Findings
+                  </Link>
+                </TableCell>
+
+                {/* Stage */}
+                <TableCell>
+                  {canEdit ? (
+                    <StageSelect clinicId={row.id} stage={row.stage} className="w-full min-w-[132px]" />
+                  ) : (
+                    <span className="text-[13px]">{STAGE_LABELS[row.stage]}</span>
+                  )}
+                </TableCell>
+
+                {/* Audited */}
+                <TableCell className="whitespace-nowrap text-[12px] text-muted-foreground">
+                  {formatDate(row.lastAuditedAt)}
+                </TableCell>
               </TableRow>
             ))}
           </TableBody>

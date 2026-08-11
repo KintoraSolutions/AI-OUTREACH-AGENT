@@ -22,16 +22,14 @@ export default async function DashboardLayout({
       >
         Skip to content
       </a>
-      <aside className="flex flex-col border-b md:h-screen md:w-64 md:shrink-0 md:border-b-0 md:border-r">
-        <div className="flex items-center gap-2 border-b px-4 py-3">
-          <div className="flex size-7 items-center justify-center rounded-md bg-primary text-primary-foreground">
-            <ShieldCheck className="size-4" />
-          </div>
-          <Link href="/dashboard" className="text-sm font-semibold">
+      <aside className="glass-nav flex flex-col border-b border-[var(--hairline)] md:sticky md:top-0 md:h-screen md:w-[228px] md:shrink-0 md:border-b-0 md:border-r">
+        <div className="flex items-center gap-2 border-b border-[var(--hairline)] px-4 py-3.5">
+          <ShieldCheck className="size-5 shrink-0 text-foreground" strokeWidth={1.75} />
+          <Link href="/dashboard" className="text-[15px] font-semibold tracking-[-0.01em]">
             Outreach Agent
           </Link>
         </div>
-        <div className="px-3 py-3">
+        <div className="px-3 py-2.5">
           <OrgSwitcher
             activeOrgId={ctx.orgId}
             activeOrgName={ctx.orgName}
@@ -44,16 +42,19 @@ export default async function DashboardLayout({
       </aside>
 
       <div className="flex min-w-0 flex-1 flex-col">
-        <header className="flex items-center justify-between gap-4 border-b px-4 py-3 md:px-6">
+        <header className="sticky top-0 z-30 flex items-center justify-between gap-4 border-b border-[var(--hairline)] bg-[var(--background)] px-4 py-2.5 md:px-[30px]">
           <MobileNav />
-          <div className="ml-auto flex items-center gap-3">
-            <span className="hidden text-xs text-muted-foreground sm:inline">
-              {ROLE_LABELS[ctx.role]}
-            </span>
+          <div className="ml-auto flex items-center gap-2.5">
             <UserMenu name={ctx.userName} email={ctx.userEmail} role={ROLE_LABELS[ctx.role]} />
+            <div className="hidden leading-tight sm:block">
+              <p className="text-[11px] text-muted-foreground">{ROLE_LABELS[ctx.role]}</p>
+              <p className="max-w-[140px] truncate text-[13px] font-medium text-foreground">
+                {ctx.userName ?? ctx.userEmail}
+              </p>
+            </div>
           </div>
         </header>
-        <main id="main-content" className="mx-auto w-full max-w-6xl flex-1 px-4 py-6 md:px-6">
+        <main id="main-content" className="mx-auto w-full max-w-6xl flex-1 px-4 py-5 md:px-[30px]">
           {children}
         </main>
       </div>

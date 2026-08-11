@@ -4,25 +4,26 @@ import { cva, type VariantProps } from "class-variance-authority";
 import { cn } from "@/lib/utils";
 
 const buttonVariants = cva(
-  "inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-md text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background disabled:pointer-events-none disabled:opacity-50 [&_svg]:size-4 [&_svg]:shrink-0",
+  "inline-flex cursor-pointer select-none items-center justify-center gap-2 whitespace-nowrap rounded-[8px] text-[13px] font-semibold tracking-[0.005em] transition-[transform,background-color,box-shadow,filter,border-color] duration-150 ease-out active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:pointer-events-none disabled:opacity-45 [&_svg]:size-4 [&_svg]:shrink-0",
   {
     variants: {
       variant: {
-        default: "bg-primary text-primary-foreground hover:bg-primary/90",
+        // Muted-mint primary, flat (no glow), dark ink.
+        default:
+          "bg-primary text-primary-foreground shadow-[0_1px_2px_rgba(0,0,0,0.3)] hover:brightness-[1.05]",
         destructive:
-          "bg-destructive text-destructive-foreground hover:bg-destructive/90",
-        outline:
-          "border border-input bg-background hover:bg-accent hover:text-accent-foreground",
-        secondary:
-          "bg-secondary text-secondary-foreground hover:bg-secondary/80",
-        ghost: "hover:bg-accent hover:text-accent-foreground",
+          "bg-destructive text-destructive-foreground shadow-[0_1px_2px_rgba(0,0,0,0.3)] hover:brightness-[1.05]",
+        // Secondary control surface with hairline border.
+        outline: "glass-control text-foreground hover:border-[var(--hairline-strong)] hover:bg-[var(--surface-2)]",
+        secondary: "bg-secondary text-secondary-foreground hover:brightness-125",
+        ghost: "text-muted-foreground hover:bg-[var(--muted)] hover:text-foreground",
         link: "text-primary underline-offset-4 hover:underline",
       },
       size: {
-        default: "h-9 px-4 py-2",
-        sm: "h-8 px-3 text-xs",
-        lg: "h-10 px-6",
-        icon: "h-9 w-9",
+        default: "h-10 px-4",
+        sm: "h-9 rounded-[7px] px-3 text-[12px]",
+        lg: "h-11 rounded-[9px] px-6 text-[14px]",
+        icon: "size-10",
       },
     },
     defaultVariants: {

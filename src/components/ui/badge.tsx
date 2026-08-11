@@ -3,16 +3,20 @@ import { cva, type VariantProps } from "class-variance-authority";
 import { cn } from "@/lib/utils";
 
 const badgeVariants = cva(
-  "inline-flex items-center rounded-md border px-2 py-0.5 text-xs font-medium",
+  "inline-flex items-center gap-1 rounded-[5px] border px-2 py-0.5 font-mono text-[10.5px] font-medium uppercase tracking-[0.08em]",
   {
     variants: {
       tone: {
-        neutral: "border-border bg-muted text-muted-foreground",
-        info: "border-transparent bg-secondary text-secondary-foreground",
-        progress: "border-transparent bg-blue-100 text-blue-800 dark:bg-blue-950 dark:text-blue-300",
-        success: "border-transparent bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300",
-        warning: "border-transparent bg-amber-100 text-amber-900 dark:bg-amber-950 dark:text-amber-300",
-        danger: "border-transparent bg-red-100 text-red-800 dark:bg-red-950 dark:text-red-300",
+        neutral: "border-[var(--hairline-strong)] bg-[var(--surface-3)] text-muted-foreground",
+        info: "border-[color-mix(in_srgb,var(--cyan)_35%,transparent)] bg-[var(--cyan-dim)] text-[var(--cyan-bright)]",
+        progress:
+          "border-[color-mix(in_srgb,var(--cyan)_35%,transparent)] bg-[var(--cyan-dim)] text-[var(--cyan-bright)]",
+        success:
+          "border-[color-mix(in_srgb,var(--mint)_35%,transparent)] bg-[var(--mint-dim)] text-[var(--mint-bright)]",
+        warning:
+          "border-[color-mix(in_srgb,var(--amber)_35%,transparent)] bg-[var(--amber-dim)] text-[var(--amber-bright)]",
+        danger:
+          "border-[color-mix(in_srgb,var(--red)_35%,transparent)] bg-[var(--red-dim)] text-[var(--red-bright)]",
       },
     },
     defaultVariants: {

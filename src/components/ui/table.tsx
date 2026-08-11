@@ -10,7 +10,12 @@ function Table({ className, ...props }: React.HTMLAttributes<HTMLTableElement>) 
 }
 
 function TableHeader({ className, ...props }: React.HTMLAttributes<HTMLTableSectionElement>) {
-  return <thead className={cn("[&_tr]:border-b", className)} {...props} />;
+  return (
+    <thead
+      className={cn("border-b border-[var(--hairline-strong)] [&_tr]:border-b-0", className)}
+      {...props}
+    />
+  );
 }
 
 function TableBody({ className, ...props }: React.HTMLAttributes<HTMLTableSectionElement>) {
@@ -20,7 +25,10 @@ function TableBody({ className, ...props }: React.HTMLAttributes<HTMLTableSectio
 function TableRow({ className, ...props }: React.HTMLAttributes<HTMLTableRowElement>) {
   return (
     <tr
-      className={cn("border-b transition-colors hover:bg-muted/50 data-[state=selected]:bg-muted", className)}
+      className={cn(
+        "border-b border-[var(--hairline)] transition-colors hover:bg-[var(--muted)] data-[state=selected]:bg-[var(--accent)]",
+        className,
+      )}
       {...props}
     />
   );
@@ -30,7 +38,7 @@ function TableHead({ className, ...props }: React.ThHTMLAttributes<HTMLTableCell
   return (
     <th
       className={cn(
-        "h-10 whitespace-nowrap px-3 text-left align-middle text-xs font-medium text-muted-foreground",
+        "h-11 whitespace-nowrap px-3 text-left align-middle font-mono text-[10.5px] font-medium uppercase tracking-[0.08em] text-[var(--faint-foreground)]",
         className,
       )}
       {...props}

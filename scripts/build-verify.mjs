@@ -23,7 +23,7 @@
  * Usage: npm run build:verify
  */
 import { spawnSync } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 
 const DIST = process.env.PREVIEW_DIST || ".next-verify";
 const env = { ...process.env, PREVIEW_DIST: DIST };
@@ -57,7 +57,22 @@ if (run("prisma generate") !== 0) {
   );
 }
 
+/**
+ * `next build` rewrites next-env.d.ts to point its routes reference at whatever
+ * distDir it used, so building here would leave the file referencing
+ * .next-verify and the working tree dirty after every run. It is generated and
+ * marked "should not be edited", so snapshot it and put it back.
+ */
+const NEXT_ENV = "next-env.d.ts";
+const nextEnvBefore = existsSync(NEXT_ENV) ? readFileSync(NEXT_ENV, "utf8") : null;
+
 const status = run("next build");
+
+if (nextEnvBefore !== null && readFileSync(NEXT_ENV, "utf8") !== nextEnvBefore) {
+  writeFileSync(NEXT_ENV, nextEnvBefore);
+  console.log(`Restored ${NEXT_ENV}, which the build had repointed at ${DIST}.`);
+}
+
 if (status !== 0) process.exit(status);
 
 console.log(

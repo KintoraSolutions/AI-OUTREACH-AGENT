@@ -27,9 +27,26 @@ export function parsePgEnv() {
   };
 }
 
+/**
+ * `fresh: true` DELETES the entire data directory before starting. It is not a
+ * "reset the schema" flag: every org, lead, draft and approval in that
+ * directory is gone, with no prompt and no backup. Callers must pass an
+ * explicit `dataDir` they own; defaulting to the developer's working database
+ * has already cost one.
+ *
+ * @param {{ dataDir?: string, fresh?: boolean }} [options]
+ */
 export async function startLocalPostgres({ dataDir, fresh = false } = {}) {
   const cfg = parsePgEnv();
   const dir = dataDir || process.env.EMBEDDED_PG_DIR || "./.local-postgres";
+  const normalizedDir = dir.replace(/\\/g, "/").replace(/\/+$/, "");
+  if (fresh && /(^|\/)\.local-postgres$/.test(normalizedDir)) {
+    throw new Error(
+      `Refusing to wipe the default development database at ${dir}. ` +
+        "fresh:true deletes the entire data directory, not just the schema. " +
+        "Pass a dataDir of your own.",
+    );
+  }
   if (fresh) {
     try {
       rmSync(dir, { recursive: true, force: true });

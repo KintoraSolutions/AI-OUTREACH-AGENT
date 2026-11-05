@@ -94,6 +94,18 @@ findings, errors and final status are all stored and that duplicates are
 prevented. It is the closest thing here to an integration test, and it needs a
 real database.
 
+> **`verify:db` destroys the database it runs against.** It starts Postgres
+> with `fresh: true`, which deletes the entire data directory rather than
+> resetting the schema. It used to default to `./.local-postgres`, the same
+> directory `npm run db:local` uses, so running it wiped the developer's
+> working database: orgs, leads, drafts, approvals, all of it, with no prompt
+> and before the first line of output. That has happened, and cost a real
+> workspace.
+>
+> It now uses `./.local-postgres-verify` instead, and `startLocalPostgres`
+> refuses `fresh: true` against any path ending in `.local-postgres`. Stop the
+> `db:local` server before running it, since both want port 5432.
+
 A full pre-merge pass is: `typecheck`, `lint`, `test`, `build:verify`.
 
 ## Operational procedures (credential-dependent)

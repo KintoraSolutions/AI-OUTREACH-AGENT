@@ -110,6 +110,16 @@ so this disappears on deploy. To check locally:
 SELECT pg_encoding_to_char(encoding) FROM pg_database WHERE datname = current_database();
 ```
 
+### `verify:db` wipes its database, and used to wipe yours
+
+`npm run verify:db` starts Postgres with `fresh: true`, which deletes the whole
+data directory. It defaulted to `./.local-postgres`, the same one `db:local`
+uses, so running it destroyed the working database with no prompt. It now uses
+`./.local-postgres-verify`, and `startLocalPostgres` throws rather than wiping
+anything named `.local-postgres`.
+
+Stop `db:local` before running it; they both want port 5432.
+
 ### Stop the embedded Postgres cleanly
 
 Killing the terminal that runs `npm run db:local` can leave Postgres in a

@@ -38,10 +38,33 @@ function assert(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(`ASSERTION FAILED: ${message}`);
 }
 
+/**
+ * A data directory of this script's own, NOT the one `npm run db:local` uses.
+ *
+ * This script starts Postgres with `fresh: true`, and `startLocalPostgres`
+ * implements that as `rmSync(dir, { recursive: true, force: true })`. It used
+ * to default to `./.local-postgres`, so every run silently deleted the
+ * developer's working database: orgs, leads, drafts, approvals, everything.
+ * The script's own description ("starts a real local Postgres") gives no hint
+ * that it destroys data, and the destruction happens before the first line of
+ * output.
+ *
+ * Isolating it is the fix. The verification still runs against a real
+ * PostgreSQL instance with a real migration and a real seed, which is the
+ * whole point of the script; it just no longer does it on top of your data.
+ */
+const VERIFY_PG_DIR = "./.local-postgres-verify";
+
 async function main() {
   console.log("→ Starting real local PostgreSQL (embedded-postgres)…");
-  // Data directory comes from EMBEDDED_PG_DIR (or the default ./.local-postgres).
-  const { pg } = await startLocalPostgres({ fresh: true });
+  console.log(`   Using an isolated data directory: ${VERIFY_PG_DIR}`);
+  console.log("   This is wiped on every run. Your db:local database is untouched.");
+  // EMBEDDED_PG_DIR still overrides, for anyone who wants to point this
+  // elsewhere, but the default must never be the working database.
+  const { pg } = await startLocalPostgres({
+    fresh: true,
+    dataDir: process.env.EMBEDDED_PG_DIR || VERIFY_PG_DIR,
+  });
 
   try {
     const env = { ...process.env };

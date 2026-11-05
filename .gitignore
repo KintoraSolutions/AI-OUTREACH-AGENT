@@ -32,6 +32,8 @@ yarn-error.log*
 
 # local embedded postgres (dev/CI database)
 /.local-postgres
+# isolated database for verify:db, which wipes its data dir on every run
+/.local-postgres-verify
 
 # vercel
 .vercel

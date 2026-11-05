@@ -10,6 +10,7 @@ export default auth((req) => {
 
   const isProtected =
     pathname.startsWith("/dashboard") ||
+    pathname.startsWith("/onboarding") ||
     pathname.startsWith("/leads") ||
     pathname.startsWith("/settings") ||
     pathname.startsWith("/campaigns") ||
@@ -25,5 +26,12 @@ export default auth((req) => {
 });
 
 export const config = {
-  matcher: ["/dashboard/:path*", "/leads/:path*", "/settings/:path*", "/campaigns/:path*", "/jobs/:path*"],
+  matcher: [
+    "/dashboard/:path*",
+    "/onboarding/:path*",
+    "/leads/:path*",
+    "/settings/:path*",
+    "/campaigns/:path*",
+    "/jobs/:path*",
+  ],
 };

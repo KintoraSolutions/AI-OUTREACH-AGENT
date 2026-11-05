@@ -1,3 +1,4 @@
+import { cache } from "react";
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { Role } from "@prisma/client";
@@ -53,7 +54,7 @@ async function ensureMemberships(userId: string, userName: string | null) {
  * is not signed in. Bootstraps a personal org on first login. Does not set
  * cookies (only a Server Action or Route Handler may switch the active org).
  */
-export async function getOrgContext(): Promise<OrgContext | null> {
+export const getOrgContext = cache(async function getOrgContext(): Promise<OrgContext | null> {
   const session = await auth();
   const userId = session?.user?.id;
   if (!userId) return null;
@@ -81,7 +82,7 @@ export async function getOrgContext(): Promise<OrgContext | null> {
       role: m.role,
     })),
   };
-}
+});
 
 /** Redirects to /signin when not authenticated; otherwise returns the context. */
 export async function requireOrgContext(): Promise<OrgContext> {

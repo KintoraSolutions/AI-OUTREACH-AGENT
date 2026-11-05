@@ -15,7 +15,7 @@ import { resolveBrowserProvider } from "@/lib/research/providers/browser";
  * Resolves the production provider bundle from the environment. A capability is
  * "real" only when its credentials are present; otherwise a Null provider is
  * used so the app reports the feature as unavailable instead of faking results
- * (plan.md Section 2B, decision 6). The website fetcher needs no credentials, so
+ * (docs/planning/build-plan.md Section 2B, decision 6). The website fetcher needs no credentials, so
  * it is always the real, compliance-first implementation.
  */
 export function getProviderBundle(): ProviderBundle {

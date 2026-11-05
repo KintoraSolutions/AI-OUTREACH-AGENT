@@ -5,9 +5,9 @@ import { revalidatePath } from "next/cache";
 import { signOut } from "@/auth";
 import { ACTIVE_ORG_COOKIE, getOrgContext } from "@/lib/auth/rbac";
 
-/** Sign the current user out and return to the sign-in page. */
+/** Sign the current user out and return to the landing page. */
 export async function signOutAction(): Promise<void> {
-  await signOut({ redirectTo: "/signin" });
+  await signOut({ redirectTo: "/" });
 }
 
 /** Switch the active organization for the current user. */

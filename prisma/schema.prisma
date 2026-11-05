@@ -106,6 +106,7 @@ model Organization {
   auditLogs           AuditLogEntry[]
   savedViews          SavedView[]
   retentionRuns       RetentionRun[]
+  people              Person[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -236,15 +237,16 @@ model Clinic {
   lastResearchedAt DateTime?
   lastAuditedAt    DateTime?
 
-  locations   ClinicLocation[]
-  contacts    Contact[]
-  audits      WebsiteAudit[]
-  scores      LeadScore[]
-  sources     Source[]
-  drafts      EmailDraft[]
-  gmailDrafts GmailDraftRecord[]
-  activities  OutreachActivity[]
-  followUps   FollowUpTask[]
+  locations    ClinicLocation[]
+  contacts     Contact[]
+  affiliations PersonAffiliation[]
+  audits       WebsiteAudit[]
+  scores       LeadScore[]
+  sources      Source[]
+  drafts       EmailDraft[]
+  gmailDrafts  GmailDraftRecord[]
+  activities   OutreachActivity[]
+  followUps    FollowUpTask[]
 
   createdById String?
   createdAt   DateTime @default(now())
@@ -254,6 +256,10 @@ model Clinic {
   @@index([orgId, stage])
   @@index([orgId, createdAt])
   @@index([orgId, normalizedName])
+  // Foreign keys are not auto-indexed by Postgres. campaignId is filtered on the
+  // campaign-detail page (clinics + _count) and by rescoreCampaign; the trailing
+  // collectedAt also serves that page's `orderBy: { collectedAt }` take.
+  @@index([campaignId, collectedAt])
 }
 
 model ClinicLocation {
@@ -291,7 +297,173 @@ model Contact {
   sourceUrl       String?
   collectedAt     DateTime    @default(now())
 
+  // Links this mailbox to the individual it belongs to, where we know. Nullable
+  // because a general info@ inbox belongs to no one, and because every existing
+  // row predates people. SetNull so deleting a person on request never deletes
+  // the clinic's contact record with them.
+  personId    String?
+  person      Person?          @relation(fields: [personId], references: [id], onDelete: SetNull)
+  // The OPC's guidance turns on an address "published on a website by the
+  // individual to whom it relates", which is not the same as an address a
+  // clinic publishes about an employee. Capturing it at collection time is
+  // cheap; recovering it later is impossible.
+  publishedBy ContactPublisher @default(UNKNOWN)
+
   @@index([clinicId])
+  @@index([personId])
+  // Identity resolution looks a person up by a published address, which
+  // must stay a bounded indexed lookup rather than a scan.
+  @@index([email])
+}
+
+enum ContactPublisher {
+  UNKNOWN
+  /**
+   * The clinic published this address about the individual.
+   */
+  CLINIC
+  /**
+   * The individual published their own address.
+   */
+  INDIVIDUAL
+}
+
+/**
+ * How much influence a role implies over operational and purchasing decisions.
+ */
+enum DecisionRole {
+  OWNER
+  MEDICAL_DIRECTOR
+  LEAD_PHYSICIAN
+  ADMIN_LEADER
+  PHYSICIAN
+  OTHER
+}
+
+// ---------------------------------------------------------------------------
+// People (physician-level outreach).
+//
+// Two tiers, split by legal basis, per docs/decisions/physician-outreach-data.md:
+//
+//   Person + PersonAffiliation + Contact  business contact information, intended
+//                                         to sit inside PIPEDA s.4.01
+//   PersonProfile                         enrichment, outside that exclusion
+//
+// The split is the whole mitigation: if the enrichment tier cannot be justified,
+// dropping PersonProfile is one migration and outreach still works. Never move
+// bio/publications/interests onto Person, and never make anything depend on
+// PersonProfile existing.
+// ---------------------------------------------------------------------------
+
+model Person {
+  id           String       @id @default(cuid())
+  orgId        String
+  organization Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  fullName       String
+  // Mirrors Clinic.normalizedName: identity resolution must be a bounded indexed
+  // lookup, never a full-table scan into memory.
+  normalizedName String @default("")
+
+  // Verification from the CPSO public register (D1). All nullable: the register
+  // is a verification source queried per person, not a source of people, and a
+  // physician we cannot verify is recorded as unverified rather than dropped.
+  // These are a SNAPSHOT at verifiedAt, not standing facts: registration status
+  // changes, so re-check before relying on it.
+  registrationNumber    String?
+  specialty             String?
+  registrationStatus    String?
+  verifiedAt            DateTime?
+  verificationSourceUrl String?
+
+  isTestData Boolean  @default(false)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  affiliations PersonAffiliation[]
+  findings     PersonFinding[]
+  contacts     Contact[]
+  profile      PersonProfile?
+
+  // Postgres treats NULLs as distinct, so unverified people do not collide.
+  @@unique([orgId, registrationNumber])
+  @@index([orgId, normalizedName])
+}
+
+/**
+ * A person's connection to one clinic. The many-to-many Contact could not express.
+ */
+model PersonAffiliation {
+  id       String @id @default(cuid())
+  personId String
+  person   Person @relation(fields: [personId], references: [id], onDelete: Cascade)
+  clinicId String
+  clinic   Clinic @relation(fields: [clinicId], references: [id], onDelete: Cascade)
+
+  role       DecisionRole @default(OTHER)
+  /**
+   * The title exactly as printed, e.g. "Founder & Medical Director".
+   */
+  roleTitle  String?
+  isOwner    Boolean      @default(false)
+  confidence Confidence   @default(WEAK_INFERENCE)
+  sourceUrl  String
+
+  firstSeenAt DateTime @default(now())
+  lastSeenAt  DateTime @updatedAt
+
+  @@unique([personId, clinicId])
+  @@index([clinicId])
+}
+
+/**
+ * ENRICHMENT TIER. Severable by design: see the header above.
+ * Nothing here is business contact information under PIPEDA s.2(1), so the
+ * s.4.01 exclusion very likely does not reach it. Content used to personalize a
+ * draft must additionally be recorded as a PersonFinding with a source, or
+ * validateDraft will block the claim, which is correct behaviour.
+ */
+model PersonProfile {
+  id       String @id @default(cuid())
+  personId String @unique
+  person   Person @relation(fields: [personId], references: [id], onDelete: Cascade)
+
+  bio          String?
+  publications String[]
+  interests    String[]
+  sourceUrl    String?
+  collectedAt  DateTime @default(now())
+}
+
+/**
+ * Evidence about a person, in the same shape as AuditFinding.
+ * Deliberately a separate table rather than a PERSON value on FindingCategory:
+ * that enum keys the scoring engine's category maps and caps, so adding to it
+ * would pull person evidence into CLINIC scoring. A person's score and a
+ * clinic's score answer different questions and must not be summed.
+ * validateDraft indexes evidence by code and never reads the category, so these
+ * flow through the hallucination guard unchanged.
+ */
+model PersonFinding {
+  id       String @id @default(cuid())
+  personId String
+  person   Person @relation(fields: [personId], references: [id], onDelete: Cascade)
+
+  code       String
+  finding    String
+  evidence   String
+  sourceUrl  String
+  confidence Confidence
+  isFact     Boolean    @default(false)
+
+  dismissed       Boolean   @default(false)
+  dismissedReason String?
+  dismissedAt     DateTime?
+
+  collectedAt DateTime @default(now())
+
+  @@unique([personId, code])
+  @@index([personId])
 }
 
 // ---------------------------------------------------------------------------
@@ -691,6 +863,11 @@ model ResearchJob {
   createdAt       DateTime        @default(now())
 
   @@index([orgId, status])
+  // campaignId is unindexed FK: filtered by the campaign-detail jobs include and
+  // the run/pause/resume/cancel `findFirst where {campaignId, status}` guards.
+  @@index([campaignId, status])
+  // The jobs list orders by createdAt; (orgId, status) can't serve that sort.
+  @@index([orgId, createdAt])
 }
 
 model ErrorLog {

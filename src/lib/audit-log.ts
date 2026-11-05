@@ -16,7 +16,7 @@ interface LogAuditEntryInput {
 }
 
 /**
- * Append an immutable entry to the org's audit log (plan.md Section on manual
+ * Append an immutable entry to the org's audit log (docs/planning/build-plan.md Section on manual
  * review). Every manual change to a finding, score, or the scoring rules records
  * its previous and new value, the acting user, a required reason, and a
  * timestamp. Entries are never updated or deleted.

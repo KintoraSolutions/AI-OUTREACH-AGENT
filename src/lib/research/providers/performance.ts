@@ -25,7 +25,7 @@ interface PageSpeedResponse {
 
 /**
  * Google PageSpeed Insights (Lighthouse) performance audit. Compliant API
- * access, one call per audited site (plan.md Section 2A / Section 6 step 5).
+ * access, one call per audited site (docs/planning/build-plan.md Section 2A / Section 6 step 5).
  */
 export class PageSpeedPerformanceProvider implements PerformanceProvider {
   readonly name = "pagespeed";

@@ -1,7 +1,7 @@
 /**
  * Minimal, dependency-free robots.txt parser and matcher.
  *
- * Compliance requirement (plan.md Section 6): the fetcher must obey robots.txt
+ * Compliance requirement (docs/planning/build-plan.md Section 6): the fetcher must obey robots.txt
  * disallow rules and crawl-delay, and must never bypass them. This implements
  * the common subset of the robots exclusion standard: user-agent groups,
  * Allow/Disallow with `*` and `$` wildcards, longest-match precedence, and

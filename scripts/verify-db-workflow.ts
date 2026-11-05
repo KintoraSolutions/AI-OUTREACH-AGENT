@@ -74,6 +74,7 @@ async function main() {
     const { Confidence } = await import("@prisma/client");
     const { FakeAiProvider } = await import("@/lib/ai/fake");
     const { draftAndSaveClinic, transitionDraft } = await import("@/lib/ai/draft-repository");
+    const { DRAFT_PROMPT_VERSION } = await import("@/lib/ai/prompts");
     type DiscoveredClinic = import("@/lib/research/types").DiscoveredClinic;
     type CampaignCriteria = import("@/lib/research/types").CampaignCriteria;
     type DiscoveryProvider = import("@/lib/research/types").DiscoveryProvider;
@@ -375,7 +376,13 @@ async function main() {
     });
     assert(draft.status === "GENERATED", `draft stored in review (was ${draft.status})`);
     assert(draft.aiProvider === "fake" && !!draft.aiModel, "provider + model stored on the draft");
-    assert(draft.promptVersion === "draft-v1", "prompt version stored");
+    // Compared against the constant, not a literal. This assertion was pinned
+    // to "draft-v1" and the prompt has since moved to v3, so verify:db failed
+    // for everyone regardless of what they changed.
+    assert(
+      draft.promptVersion === DRAFT_PROMPT_VERSION,
+      `prompt version stored (expected ${DRAFT_PROMPT_VERSION}, got ${draft.promptVersion})`,
+    );
     assert(draft.version === 1 && draft.generatedAt instanceof Date, "version + generation timestamp stored");
     assert(Array.isArray(draft.personalizationEvidence) && (draft.personalizationEvidence as unknown[]).length >= 1, "claim-to-evidence mapping stored");
     assert(draft.evidenceFindingIds.length >= 1 && draft.evidenceSourceUrls.length >= 1, "evidence ids + source URLs stored");

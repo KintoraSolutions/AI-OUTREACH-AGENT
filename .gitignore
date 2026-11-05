@@ -38,3 +38,7 @@ yarn-error.log*
 
 # typescript
 *.tsbuildinfo
+
+# Isolated build dir used to verify a production build without
+# clobbering a running dev server's .next.
+.next-verify

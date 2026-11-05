@@ -4,7 +4,7 @@ import { AiGenerationError, AiNotConfiguredError } from "@/lib/ai/errors";
 import type { AiProvider, AiStructuredRequest } from "@/lib/ai/types";
 
 /**
- * Anthropic implementation of `AiProvider` (plan.md Section 7, decision 2).
+ * Anthropic implementation of `AiProvider` (docs/planning/build-plan.md Section 7, decision 2).
  *
  * Structured output is enforced with forced tool use: the model is required to
  * call a single tool whose `input_schema` is the desired shape, so the response
@@ -12,13 +12,13 @@ import type { AiProvider, AiStructuredRequest } from "@/lib/ai/types";
  * the most broadly-supported structured-output mechanism and keeps the provider
  * independent of any one SDK's newest output-format API.
  *
- * The model id is configurable via `AI_MODEL` (default `claude-opus-5`); it is
+ * The model id is configurable via `AI_MODEL` (default `claude-sonnet-5`); it is
  * never a hardcoded value that cannot be replaced. Retries (transient
  * network/5xx/429) and a per-request timeout are handled here; a missing API key
  * raises `AiNotConfiguredError` rather than silently producing fake output.
  */
 
-export const DEFAULT_AI_MODEL = "claude-opus-5";
+export const DEFAULT_AI_MODEL = "claude-sonnet-5";
 
 function num(value: string | undefined, fallback: number): number {
   const n = Number.parseInt(value ?? "", 10);

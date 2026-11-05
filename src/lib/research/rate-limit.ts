@@ -1,6 +1,6 @@
 /**
  * Per-domain rate limiter. Enforces a minimum interval between requests to the
- * same host (plan.md Section 6, requirement 11). The clock and sleep functions
+ * same host (docs/planning/build-plan.md Section 6, requirement 11). The clock and sleep functions
  * are injectable so tests run deterministically without real delays.
  */
 

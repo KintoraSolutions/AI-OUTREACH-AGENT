@@ -2,7 +2,7 @@ import { isRetryable } from "@/lib/research/errors";
 
 /**
  * Retry a function on recoverable failures with bounded exponential backoff
- * (plan.md Section 5, requirement 10). Non-recoverable errors are rethrown
+ * (docs/planning/build-plan.md Section 5, requirement 10). Non-recoverable errors are rethrown
  * immediately and never retried. `sleep` is injectable so tests are instant.
  */
 export interface RetryOptions {

@@ -30,10 +30,10 @@ function KpiCard({
   viz: React.ReactNode;
 }) {
   return (
-    <div className="glass rounded-[8px] p-4">
-      <p className="text-[12px] text-muted-foreground">{label}</p>
+    <div className="glass rounded-md p-4">
+      <p className="text-caption1 text-muted-foreground">{label}</p>
       <div className="mt-1.5 flex items-end justify-between gap-3">
-        <span className="text-[30px] font-semibold leading-none tabular-nums text-foreground">
+        <span className="text-title2 font-semibold leading-none tabular-nums text-foreground">
           {value}
         </span>
         <div className="shrink-0">{viz}</div>
@@ -51,7 +51,10 @@ export default async function JobsPage() {
       orderBy: { createdAt: "desc" },
       take: 100,
       include: {
-        errors: { orderBy: { createdAt: "desc" }, take: 50 },
+        // Only the first few errors are previewed; the total comes from _count,
+        // so we no longer hydrate up to 50 error rows per job.
+        errors: { orderBy: { createdAt: "desc" }, take: 5 },
+        _count: { select: { errors: true } },
         campaign: { select: { name: true } },
       },
     }),
@@ -109,6 +112,7 @@ export default async function JobsPage() {
     createdAt: j.createdAt,
     campaignId: j.campaignId,
     campaignName: j.campaign?.name ?? null,
+    errorCount: j._count.errors,
     errors: j.errors,
   }));
 

@@ -1,5 +1,5 @@
 /**
- * Least-privilege Google OAuth scopes (plan.md S9, S10).
+ * Least-privilege Google OAuth scopes (docs/planning/build-plan.md S9, S10).
  *
  * We request ONLY what each capability needs:
  *  - Gmail: `gmail.compose` — create drafts. NOT `gmail.send` / `gmail.modify`.

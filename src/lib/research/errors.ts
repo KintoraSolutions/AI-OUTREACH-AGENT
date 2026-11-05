@@ -2,7 +2,7 @@
  * Typed errors for the research engine.
  *
  * The distinction between recoverable and non-recoverable failures drives the
- * retry and failure-isolation behavior in the pipeline (plan.md Section 5):
+ * retry and failure-isolation behavior in the pipeline (docs/planning/build-plan.md Section 5):
  * transient problems are retried with backoff; permanent ones are recorded and
  * skipped without stopping the campaign.
  */

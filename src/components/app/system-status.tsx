@@ -3,42 +3,54 @@ import { providerStatus } from "@/lib/env";
 import { Badge } from "@/components/ui/badge";
 
 /**
- * Renders the configured/unconfigured state of each provider (plan.md 2B).
+ * Renders the configured/unconfigured state of each provider (docs/planning/build-plan.md 2B).
  * When a provider is not configured the dependent functionality is named as
  * unavailable rather than faked.
+ *
+ * State is never carried by color alone: each row pairs its tint with an icon
+ * and a written status, so it survives color-vision deficiency, grayscale
+ * printing, and Windows High Contrast.
  */
 export function SystemStatus() {
   const providers = providerStatus();
   return (
-    <div className="divide-y rounded-lg border">
+    <ul className="divide-y divide-[var(--fl-stroke-2)] overflow-hidden rounded-md border border-[var(--fl-stroke-2)] bg-[var(--fl-bg-1)]">
       {providers.map((p) => (
-        <div key={p.key} className="flex items-start justify-between gap-4 px-4 py-3">
-          <div className="min-w-0">
-            <div className="flex items-center gap-2">
-              <span className="text-sm font-medium">{p.label}</span>
+        <li
+          key={p.key}
+          className="flex flex-wrap items-start justify-between gap-x-4 gap-y-2 px-4 py-3"
+        >
+          <div className="min-w-0 flex-1">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-body1 font-semibold text-[var(--fl-fg-1)]">{p.label}</span>
               <Badge tone="neutral">{p.phase}</Badge>
             </div>
-            {p.configured ? (
-              <p className="mt-0.5 text-xs text-muted-foreground">Configured and available.</p>
-            ) : (
-              <p className="mt-0.5 text-xs text-muted-foreground">
-                Unavailable: {p.unavailable} Set {p.requiredEnv.join(", ")}.
-              </p>
-            )}
+            <p className="mt-1 text-caption1 leading-relaxed text-[var(--fl-fg-3)]">
+              {p.configured ? (
+                "Configured and available."
+              ) : (
+                <>
+                  Unavailable: {p.unavailable}{" "}
+                  <span className="font-semibold text-[var(--fl-fg-2)]">
+                    Set {p.requiredEnv.join(", ")}.
+                  </span>
+                </>
+              )}
+            </p>
           </div>
           {p.configured ? (
-            <span className="flex shrink-0 items-center gap-1.5 text-xs font-medium text-emerald-600">
-              <CheckCircle2 className="size-4" />
+            <span className="inline-flex shrink-0 items-center gap-1.5 rounded-md border border-[var(--fl-success-stroke)] bg-[var(--fl-success-bg)] px-2 py-0.5 text-caption1 font-semibold text-[var(--fl-success-fg)]">
+              <CheckCircle2 aria-hidden="true" className="size-3.5" />
               Ready
             </span>
           ) : (
-            <span className="flex shrink-0 items-center gap-1.5 text-xs font-medium text-amber-600">
-              <CircleAlert className="size-4" />
+            <span className="inline-flex shrink-0 items-center gap-1.5 rounded-md border border-[var(--fl-warning-stroke)] bg-[var(--fl-warning-bg)] px-2 py-0.5 text-caption1 font-semibold text-[var(--fl-warning-fg)]">
+              <CircleAlert aria-hidden="true" className="size-3.5" />
               Not configured
             </span>
           )}
-        </div>
+        </li>
       ))}
-    </div>
+    </ul>
   );
 }

@@ -12,10 +12,11 @@ import {
   jsonOrNull,
   loadDraftContext,
   persistDraftResult,
-  serviceToStrategy,
   transitionDraft,
 } from "@/lib/ai/draft-repository";
 import { scanContent } from "@/lib/ai/draft-guard";
+import { loadEmailVoice, wordBandFor } from "@/lib/ai/email-voice";
+import { loadOrgAiProfile } from "@/lib/ai/org-ai-profile";
 import type { PersonalizationEvidenceItem } from "@/lib/ai/draft-types";
 import { getBulkDraftRunner } from "@/lib/ai/bulk-runner";
 import { RunnerNotConfiguredError } from "@/lib/research/runner";
@@ -61,6 +62,9 @@ async function runGenerate(clinicId: string, ctx: OrgContext): Promise<FormState
       score: context.score,
       findings: context.findings,
       provider,
+      voice: context.voice,
+      profile: context.profile,
+      aiProfile: context.aiProfile,
     });
     await persistDraftResult(
       { clinicId, contactId: context.contactId, clinic: context.clinic, clinicName: context.clinic.name },
@@ -125,23 +129,19 @@ export async function editDraftAction(_prev: FormState, formData: FormData): Pro
   // Re-validate the edited text with the same safety rules (no claim mapping on a
   // free edit, so loss/revenue claims are gated on the draft's stored evidence).
   const evidence = (draft.personalizationEvidence as unknown as PersonalizationEvidenceItem[]) ?? [];
-  const org = await prisma.organization.findUnique({ where: { id: ctx.orgId } });
+  // Use the org's own length target and use case so an edit is judged by the
+  // same rules the draft was generated under.
+  const [voice, aiProfile] = await Promise.all([
+    loadEmailVoice(ctx.orgId),
+    loadOrgAiProfile(ctx.orgId),
+  ]);
   const scan = scanContent({
     body,
     subject,
     clinicName: draft.clinicName || "",
-    org: {
-      companyName: org?.companyName ?? null,
-      portfolioUrl: org?.portfolioUrl ?? null,
-      contactUrl: org?.contactUrl ?? null,
-      senderName: org?.senderName ?? null,
-      senderEmail: org?.senderEmail ?? null,
-      klearqProductName: org?.klearqProductName ?? null,
-      klearqTagline: org?.klearqTagline ?? null,
-      klearqUrl: org?.klearqUrl ?? null,
-    },
-    strategy: serviceToStrategy(draft.service),
     hasVerifiedEvidence: evidence.some((e) => e.isFact),
+    wordBand: wordBandFor(voice),
+    blockPhi: aiProfile.useCase === "patient_referral",
   });
   const blocked = scan.blockedReasons.length > 0;
 
@@ -187,7 +187,9 @@ export async function editDraftAction(_prev: FormState, formData: FormData): Pro
 // Approve / reject
 // ---------------------------------------------------------------------------
 
-export async function approveDraftAction(draftId: string): Promise<FormState> {
+export async function approveDraftAction(
+  draftId: string,
+): Promise<FormState & { gmailCreated?: boolean }> {
   const guard = await ctxOrError(Role.ADMIN);
   if ("error" in guard) return guard.error;
   const { ctx } = guard;
@@ -218,8 +220,34 @@ export async function approveDraftAction(draftId: string): Promise<FormState> {
     },
   });
 
+  // One-click flow: approving also creates the Gmail draft. All Gmail safety
+  // guards still run inside createGmailDraftForApproved (a usable connection is
+  // required, plus do-not-contact / suppression / unsubscribe), it is idempotent
+  // per approved version, and it never sends. If Gmail is not connected (or a
+  // guard blocks it), the approval still succeeds and gmailCreated is false.
+  const gmail = await createGmailDraftForApproved(ctx.orgId, draftId, {
+    id: ctx.userId,
+    name: ctx.userName,
+  });
+
   revalidatePath(`/leads/${draft.clinicId}`);
-  return { ok: true, message: "Draft approved." };
+  revalidatePath("/leads");
+
+  if (gmail.ok) {
+    return {
+      ok: true,
+      gmailCreated: true,
+      message:
+        gmail.outcome === "already_exists"
+          ? "Draft approved. A Gmail draft already existed for this version."
+          : "Draft approved and Gmail draft created. Review and send it from Gmail.",
+    };
+  }
+  return {
+    ok: true,
+    gmailCreated: false,
+    message: `Draft approved. Gmail draft not created: ${gmail.message ?? "Gmail is not connected."}`,
+  };
 }
 
 export async function rejectDraftAction(draftId: string, reason: string): Promise<FormState> {
@@ -381,4 +409,46 @@ export async function bulkGenerateDraftsAction(campaignId: string): Promise<Form
   revalidatePath(`/campaigns/${campaignId}`);
   revalidatePath("/jobs");
   return { ok: true, message: "Bulk drafting started. Track progress on the Jobs page." };
+}
+
+/**
+ * Org-wide bulk drafting: every qualified lead that has no draft yet, across
+ * every campaign and manually added leads alike.
+ *
+ * Deliberately skips leads that already have a draft, so pressing this twice
+ * never regenerates work you have already reviewed and never discards an
+ * approval. That makes it safe to re-run while a campaign is still discovering
+ * clinics — which is the normal case.
+ */
+export async function bulkGenerateAllDraftsAction(): Promise<FormState> {
+  const guard = await ctxOrError(Role.ADMIN);
+  if ("error" in guard) return guard.error;
+  const { ctx } = guard;
+
+  const provider = getAiProvider();
+  if (!provider.isConfigured()) {
+    return fail("AI drafting is not configured. Set ANTHROPIC_API_KEY in the environment.");
+  }
+
+  // campaignId stays null: that is what marks this an org-wide run in
+  // PrismaDraftJobRepository.loadTargets.
+  const job = await prisma.researchJob.create({
+    data: { orgId: ctx.orgId, type: "draft.bulk", status: "QUEUED" },
+  });
+
+  try {
+    const runner = getBulkDraftRunner();
+    await runner.start(job.id);
+  } catch (e) {
+    await prisma.researchJob.update({
+      where: { id: job.id },
+      data: { status: "FAILED", message: e instanceof Error ? e.message.slice(0, 500) : "Runner error." },
+    });
+    if (e instanceof RunnerNotConfiguredError) return fail(e.message);
+    throw e;
+  }
+
+  revalidatePath("/review");
+  revalidatePath("/jobs");
+  return { ok: true, message: "Drafting started. Track progress on the Jobs page." };
 }

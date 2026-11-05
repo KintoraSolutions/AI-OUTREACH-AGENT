@@ -3,7 +3,6 @@
 import { useActionState, useEffect } from "react";
 import { toast } from "sonner";
 import { Input } from "@/components/ui/input";
-import { Textarea } from "@/components/ui/textarea";
 import { Field } from "@/components/ui/field";
 import { SubmitButton } from "@/components/app/submit-button";
 import { Alert, AlertDescription } from "@/components/ui/alert";
@@ -17,10 +16,6 @@ export interface OrgIdentityDefaults {
   contactUrl: string | null;
   senderName: string | null;
   senderEmail: string | null;
-  klearqProductName: string | null;
-  klearqTagline: string | null;
-  klearqUrl: string | null;
-  klearqCapabilities: string[];
 }
 
 export function OrgIdentityForm({
@@ -74,40 +69,6 @@ export function OrgIdentityForm({
             </Field>
             <Field label="Sender email" htmlFor="senderEmail" error={err.senderEmail}>
               <Input id="senderEmail" name="senderEmail" type="email" defaultValue={defaults.senderEmail ?? ""} />
-            </Field>
-          </div>
-        </section>
-
-        <section className="space-y-4">
-          <div>
-            <h2 className="text-sm font-semibold">KlearQ product</h2>
-            <p className="text-sm text-muted-foreground">
-              Details used when the AI recommends KlearQ (used in later phases).
-            </p>
-          </div>
-          <div className="grid gap-4 sm:grid-cols-2">
-            <Field label="Product name" htmlFor="klearqProductName" error={err.klearqProductName}>
-              <Input id="klearqProductName" name="klearqProductName" defaultValue={defaults.klearqProductName ?? ""} />
-            </Field>
-            <Field label="Tagline" htmlFor="klearqTagline" error={err.klearqTagline}>
-              <Input id="klearqTagline" name="klearqTagline" defaultValue={defaults.klearqTagline ?? ""} />
-            </Field>
-            <Field label="Product URL" htmlFor="klearqUrl" error={err.klearqUrl} className="sm:col-span-2">
-              <Input id="klearqUrl" name="klearqUrl" type="url" defaultValue={defaults.klearqUrl ?? ""} placeholder="https://" />
-            </Field>
-            <Field
-              label="Capabilities (one per line)"
-              htmlFor="klearqCapabilities"
-              error={err.klearqCapabilities}
-              className="sm:col-span-2"
-            >
-              <Textarea
-                id="klearqCapabilities"
-                name="klearqCapabilities"
-                rows={5}
-                defaultValue={defaults.klearqCapabilities.join("\n")}
-                placeholder={"Centralized call queues\nMissed-call tracking\nCallback lists"}
-              />
             </Field>
           </div>
         </section>

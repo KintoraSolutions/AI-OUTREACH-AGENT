@@ -103,4 +103,22 @@ export async function loadScoringOverrides(orgId: string): Promise<ScoringOverri
   return parsed.success ? parsed.data : scoringOverridesSchema.parse({});
 }
 
+/**
+ * Load the effective config AND the raw overrides in a SINGLE DB read. The
+ * settings page needs both, and they derive from the same stored row — calling
+ * `loadScoringConfig` + `loadScoringOverrides` separately queried it twice.
+ * Semantics are identical to calling both individually.
+ */
+export async function loadScoringConfigAndOverrides(
+  orgId: string,
+): Promise<{ config: ScoringConfig; overrides: ScoringOverrides }> {
+  const row = await prisma.systemSetting.findUnique({
+    where: { orgId_key: { orgId, key: SCORING_SETTING_KEY } },
+  });
+  const parsed = scoringOverridesSchema.safeParse(row?.value ?? {});
+  const overrides = parsed.success ? parsed.data : scoringOverridesSchema.parse({});
+  const config = parsed.success ? resolveScoringConfig(parsed.data) : defaultScoringConfig();
+  return { config, overrides };
+}
+
 export { DEFAULT_RULESET_VERSION };

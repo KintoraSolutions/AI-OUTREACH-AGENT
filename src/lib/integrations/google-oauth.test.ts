@@ -40,7 +40,9 @@ describe("buildAuthUrl", () => {
     const p = url.searchParams;
     expect(url.origin + url.pathname).toBe("https://accounts.google.com/o/oauth2/v2/auth");
     expect(p.get("access_type")).toBe("offline");
-    expect(p.get("prompt")).toBe("consent");
+    // `consent` issues the refresh token; `select_account` is asserted in the
+    // account-selection block below.
+    expect((p.get("prompt") ?? "").split(" ")).toContain("consent");
     expect(p.get("include_granted_scopes")).toBe("true");
     expect(p.get("response_type")).toBe("code");
     expect(p.get("redirect_uri")).toBe(CFG.redirectUri);
@@ -130,5 +132,35 @@ describe("decodeIdToken", () => {
 
   it("returns empty for a malformed token", () => {
     expect(decodeIdToken("not-a-jwt")).toEqual({});
+  });
+});
+
+describe("buildAuthUrl — account selection", () => {
+  it("always asks Google to show the account chooser", () => {
+    // Without select_account, a browser already signed into a personal Gmail
+    // reconnects to it silently and a company Workspace account cannot be
+    // chosen at all.
+    const url = new URL(buildAuthUrl(CFG, { scopes: ["a"], state: "st" }));
+    const prompt = url.searchParams.get("prompt") ?? "";
+    expect(prompt.split(" ")).toContain("select_account");
+  });
+
+  it("still asks for consent, which is what issues the refresh token", () => {
+    const url = new URL(buildAuthUrl(CFG, { scopes: ["a"], state: "st" }));
+    expect((url.searchParams.get("prompt") ?? "").split(" ")).toContain("consent");
+    expect(url.searchParams.get("access_type")).toBe("offline");
+  });
+
+  it("passes a login hint without it preventing another choice", () => {
+    const url = new URL(
+      buildAuthUrl(CFG, { scopes: ["a"], state: "st", loginHint: "me@personal.example" }),
+    );
+    expect(url.searchParams.get("login_hint")).toBe("me@personal.example");
+    expect((url.searchParams.get("prompt") ?? "").split(" ")).toContain("select_account");
+  });
+
+  it("omits the hint entirely when there is none", () => {
+    const url = new URL(buildAuthUrl(CFG, { scopes: ["a"], state: "st", loginHint: null }));
+    expect(url.searchParams.has("login_hint")).toBe(false);
   });
 });

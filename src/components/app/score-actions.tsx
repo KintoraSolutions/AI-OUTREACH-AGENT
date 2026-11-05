@@ -10,6 +10,7 @@ import { Select } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { Field } from "@/components/ui/field";
 import { SubmitButton } from "@/components/app/submit-button";
+import { ReasonDialog } from "@/components/app/reason-dialog";
 import { SERVICE_LABELS } from "@/lib/leads/constants";
 import { initialFormState } from "@/lib/actions/form";
 import {
@@ -43,26 +44,38 @@ export function RecalcButton({ clinicId }: { clinicId: string }) {
 
 export function ClearOverrideButton({ clinicId }: { clinicId: string }) {
   const [pending, start] = useTransition();
+  const [open, setOpen] = useState(false);
   const router = useRouter();
+
+  function confirm(reason: string) {
+    start(async () => {
+      const res = await clearScoreOverride(clinicId, reason);
+      if (res.ok) {
+        toast.success(res.message ?? "Override cleared.");
+        setOpen(false);
+        router.refresh();
+      } else toast.error(res.error ?? "Could not clear override.");
+    });
+  }
+
   return (
-    <Button
-      variant="ghost"
-      size="sm"
-      disabled={pending}
-      onClick={() => {
-        const reason = window.prompt("Reason for clearing the override:");
-        if (!reason) return;
-        start(async () => {
-          const res = await clearScoreOverride(clinicId, reason);
-          if (res.ok) {
-            toast.success(res.message ?? "Override cleared.");
-            router.refresh();
-          } else toast.error(res.error ?? "Could not clear override.");
-        });
-      }}
-    >
-      Clear override
-    </Button>
+    <>
+      <Button variant="ghost" size="sm" disabled={pending} onClick={() => setOpen(true)}>
+        Clear override
+      </Button>
+      <ReasonDialog
+        open={open}
+        onOpenChange={setOpen}
+        title="Clear the manual override"
+        description="The score returns to whatever the current ruleset computes from the stored findings."
+        label="Reason"
+        placeholder="Why is the override no longer right?"
+        confirmLabel="Clear override"
+        pendingLabel="Clearing…"
+        pending={pending}
+        onConfirm={confirm}
+      />
+    </>
   );
 }
 

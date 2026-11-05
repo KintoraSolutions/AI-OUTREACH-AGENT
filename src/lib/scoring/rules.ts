@@ -2,7 +2,7 @@ import { Confidence, FindingCategory } from "@prisma/client";
 import type { ScoringConfig, ScoringRule } from "@/lib/scoring/types";
 
 /**
- * The documented DEFAULT scoring model (plan.md Section 6A). Every point value,
+ * The documented DEFAULT scoring model (docs/planning/build-plan.md Section 6A). Every point value,
  * cap, confidence multiplier, and recommendation threshold below is a default
  * that an org admin can override in Settings; the effective config is resolved in
  * `config.ts`. Rule ids are stable and prefixed by area so a code maps to exactly
@@ -38,7 +38,7 @@ export const DEFAULT_RULES: ScoringRule[] = [
   { id: "sw_disconnected_systems", category: F.SOFTWARE, points: 4, minConfidence: C.STRONG_INFERENCE, label: "Disconnected booking systems", description: "More than one distinct booking system was detected." },
   { id: "sw_complex_navigation", category: F.SOFTWARE, points: 3, minConfidence: C.WEAK_INFERENCE, label: "Complex service navigation", description: "Deep or complex navigation suggests intricate workflows." },
 
-  // --- KlearQ opportunity (cap 25) ---
+  // --- Phone operations opportunity (cap 25) ---
   { id: "kq_multiple_locations", category: F.KLEARQ, points: 6, minConfidence: C.STRONG_INFERENCE, label: "Multiple locations", description: "Multiple locations increase call-routing complexity." },
   { id: "kq_multiple_phones", category: F.KLEARQ, points: 5, minConfidence: C.STRONG_INFERENCE, label: "Multiple phone numbers", description: "Several public phone numbers suggest fragmented call handling." },
   { id: "kq_call_first", category: F.KLEARQ, points: 5, minConfidence: C.WEAK_INFERENCE, label: "Call-first booking", description: "Calling is the primary way to book." },

@@ -22,7 +22,15 @@ function bulkDelayMs(): number {
   return Number.isFinite(n) && n >= 0 ? n : 750;
 }
 
-export class InlineBulkDraftRunner implements JobRunner {
+/**
+ * Bulk drafting narrows JobRunner: the campaign is optional, because an
+ * org-wide run has none and the job row is what drives targeting either way.
+ */
+export interface BulkDraftRunner extends Omit<JobRunner, "start"> {
+  start(jobId: string, campaignId?: string): Promise<void>;
+}
+
+export class InlineBulkDraftRunner implements BulkDraftRunner {
   readonly name = "inline";
   readonly durable = false;
 
@@ -54,14 +62,14 @@ export class InlineBulkDraftRunner implements JobRunner {
   }
 }
 
-export class InngestBulkDraftRunner implements JobRunner {
+export class InngestBulkDraftRunner implements BulkDraftRunner {
   readonly name = "inngest";
   readonly durable = true;
 
-  async start(jobId: string, campaignId: string): Promise<void> {
+  async start(jobId: string, campaignId?: string): Promise<void> {
     await inngest.send({
       name: BULK_DRAFT_EVENT,
-      data: { jobId, campaignId },
+      data: campaignId ? { jobId, campaignId } : { jobId },
       id: `bulk-drafting-${jobId}`,
     });
   }
@@ -70,7 +78,7 @@ export class InngestBulkDraftRunner implements JobRunner {
 let inlineRunner: InlineBulkDraftRunner | null = null;
 let inngestRunner: InngestBulkDraftRunner | null = null;
 
-export function getBulkDraftRunner(): JobRunner {
+export function getBulkDraftRunner(): BulkDraftRunner {
   const selection = chooseRunner({
     nodeEnv: env.NODE_ENV,
     inngestConfigured: isProviderConfigured("background_jobs"),

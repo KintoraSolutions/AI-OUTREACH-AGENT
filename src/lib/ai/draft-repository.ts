@@ -2,6 +2,9 @@ import { ActivityType, DraftStatus, Prisma, RecommendedService } from "@prisma/c
 import { prisma } from "@/lib/db";
 import { getAiProvider } from "@/lib/ai/provider";
 import { generateDraft } from "@/lib/ai/draft";
+import { loadEmailVoice, type EmailVoice } from "@/lib/ai/email-voice";
+import { loadCompanyProfile, type CompanyProfile } from "@/lib/ai/company-profile";
+import { loadOrgAiProfile, type OrgAiProfile } from "@/lib/ai/org-ai-profile";
 import { effectiveServiceOf } from "@/lib/leads/score-filter";
 import { PrismaResearchRepository } from "@/lib/research/repository";
 import type { AiProvider } from "@/lib/ai/types";
@@ -38,6 +41,9 @@ export interface DraftContext {
   org: OrgIdentity;
   score: DraftScoreSummary;
   findings: DraftFinding[];
+  voice: EmailVoice;
+  profile: CompanyProfile;
+  aiProfile: OrgAiProfile;
 }
 
 export const jsonOrNull = (v: unknown): Prisma.InputJsonValue | typeof Prisma.JsonNull =>
@@ -51,15 +57,20 @@ export async function loadDraftContext(
   orgId: string,
   clinicId: string,
 ): Promise<DraftContext | null> {
-  const clinic = await prisma.clinic.findFirst({
-    where: { id: clinicId, orgId },
-    include: {
-      organization: true,
-      contacts: { orderBy: { isDecisionMaker: "desc" } },
-      scores: { take: 1, orderBy: { computedAt: "desc" } },
-      audits: { take: 1, orderBy: { checkedAt: "desc" }, include: { findings: true } },
-    },
-  });
+  const [clinic, voice, profile, aiProfile] = await Promise.all([
+    prisma.clinic.findFirst({
+      where: { id: clinicId, orgId },
+      include: {
+        organization: true,
+        contacts: { orderBy: { isDecisionMaker: "desc" } },
+        scores: { take: 1, orderBy: { computedAt: "desc" } },
+        audits: { take: 1, orderBy: { checkedAt: "desc" }, include: { findings: true } },
+      },
+    }),
+    loadEmailVoice(orgId),
+    loadCompanyProfile(orgId),
+    loadOrgAiProfile(orgId),
+  ]);
   if (!clinic) return null;
 
   const org = clinic.organization;
@@ -78,9 +89,6 @@ export async function loadDraftContext(
     contactUrl: org.contactUrl,
     senderName: org.senderName,
     senderEmail: org.senderEmail,
-    klearqProductName: org.klearqProductName,
-    klearqTagline: org.klearqTagline,
-    klearqUrl: org.klearqUrl,
   };
 
   const score: DraftScoreSummary = scoreRow
@@ -115,7 +123,16 @@ export async function loadDraftContext(
     dismissed: f.dismissed,
   }));
 
-  return { contactId: contact?.id ?? null, clinic: draftClinic, org: orgIdentity, score, findings };
+  return {
+    contactId: contact?.id ?? null,
+    clinic: draftClinic,
+    org: orgIdentity,
+    score,
+    findings,
+    voice,
+    profile,
+    aiProfile,
+  };
 }
 
 /**
@@ -271,6 +288,9 @@ export async function draftAndSaveClinic(
     score: context.score,
     findings: context.findings,
     provider,
+    voice: context.voice,
+    profile: context.profile,
+    aiProfile: context.aiProfile,
   });
 
   await persistDraftResult(
@@ -293,11 +313,27 @@ export class PrismaDraftJobRepository implements DraftJobRepository {
 
   async loadTargets(jobId: string): Promise<{ orgId: string; clinicIds: string[] } | null> {
     const job = await prisma.researchJob.findUnique({ where: { id: jobId } });
-    if (!job || !job.campaignId) return null;
+    if (!job) return null;
+
+    // A job with no campaign is an org-wide "fill in what is missing" run: it
+    // targets every qualified lead that has no draft at all, so it stays safe
+    // to re-run as a campaign keeps discovering clinics.
+    const orgWide = job.campaignId === null;
 
     // Qualified leads: scored, an effective service other than NONE, contactable.
     const clinics = await prisma.clinic.findMany({
-      where: { orgId: job.orgId, campaignId: job.campaignId, doNotContact: false, scores: { some: {} } },
+      where: {
+        orgId: job.orgId,
+        ...(orgWide ? {} : { campaignId: job.campaignId }),
+        doNotContact: false,
+        scores: { some: {} },
+        ...(orgWide
+          ? { drafts: { none: {} } }
+          : // Never overwrite a human approval. persistDraftResult upserts by
+            // clinicId and resets the status, so without this guard a second
+            // campaign run would silently discard every approved draft in it.
+            { drafts: { none: { status: DraftStatus.APPROVED } } }),
+      },
       // Select only what effectiveServiceOf needs; avoid loading the large
       // LeadScore.breakdown JSON for every clinic in the campaign.
       select: {

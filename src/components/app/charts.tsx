@@ -3,13 +3,33 @@ import { cn } from "@/lib/utils";
 
 /**
  * Compact, dependency-free SVG charts for the dashboard analytics strip.
- * Deliberately muted: green shades only, hairline grid, low-contrast axes.
+ * Restrained: a themed categorical palette, hairline grid, low-contrast axes.
  * All are pure/server-renderable (no interactivity, no client bundle).
  */
 
-// Muted green shades (lightest -> darkest) + a neutral for "other".
-export const GREEN_SHADES = ["#6fd09a", "#4f9e77", "#356f54", "#8bdcae"] as const;
-export const NEUTRAL_SHADE = "#3a3b39";
+/**
+ * Categorical series colors.
+ *
+ * These were four hardcoded mint greens (`#6fd09a`...) from the previous dark
+ * theme, so after the Fluent re-skin the donut and stacked bars still rendered
+ * green while every other chart element followed the brand — and the neutral
+ * track was a near-black `#3a3b39` that disappeared on a light canvas.
+ *
+ * They now reference theme-aware tokens (defined in globals.css), so charts
+ * switch with the theme and stay separable by lightness as well as hue.
+ */
+export const SERIES_SHADES = [
+  "var(--fl-chart-1)",
+  "var(--fl-chart-2)",
+  "var(--fl-chart-3)",
+  "var(--fl-chart-4)",
+  "var(--fl-chart-5)",
+] as const;
+
+/** Retained name so existing call sites keep working. */
+export const GREEN_SHADES = SERIES_SHADES;
+
+export const NEUTRAL_SHADE = "var(--fl-chart-track)";
 
 const AXIS = "var(--faint-foreground)";
 const GRID = "var(--hairline)";
@@ -22,7 +42,7 @@ export interface Datum {
 
 function ChartEmpty({ label }: { label: string }) {
   return (
-    <div className="flex min-h-[130px] items-center justify-center text-[12px] text-muted-foreground">
+    <div className="flex min-h-[130px] items-center justify-center text-caption1 text-muted-foreground">
       {label}
     </div>
   );
@@ -171,7 +191,7 @@ export function DonutChart({
 
   return (
     <svg viewBox={`0 0 ${size} ${size}`} className="size-[112px] shrink-0" role="img" aria-label="Lead distribution by stage, donut chart">
-      <circle cx={c} cy={c} r={r} fill="none" stroke="var(--surface-3)" strokeWidth={sw} />
+      <circle cx={c} cy={c} r={r} fill="none" stroke="var(--fl-chart-track)" strokeWidth={sw} />
       {data.map((d, i) => {
         const len = (d.value / total) * circ;
         const el = (
@@ -349,7 +369,7 @@ export function ProgressRing({
       role="img"
       aria-label={`${label} (${clamped.toFixed(0)} percent)`}
     >
-      <circle cx={c} cy={c} r={r} fill="none" stroke="var(--surface-3)" strokeWidth={4} />
+      <circle cx={c} cy={c} r={r} fill="none" stroke="var(--fl-chart-track)" strokeWidth={4} />
       <circle
         cx={c}
         cy={c}
@@ -386,7 +406,7 @@ export function Gauge({ value, size = 52 }: { value: number; size?: number }) {
 
   return (
     <svg viewBox={`0 0 ${size} ${size}`} width={size} height={size} role="img" aria-label={`${pct.toFixed(1)} percent`}>
-      <circle cx={c} cy={c} r={r} fill="none" stroke="var(--surface-3)" strokeWidth={5} />
+      <circle cx={c} cy={c} r={r} fill="none" stroke="var(--fl-chart-track)" strokeWidth={5} />
       <circle
         cx={c}
         cy={c}
@@ -415,7 +435,7 @@ export function ChartLegend({
   return (
     <ul
       className={cn(
-        "text-[10.5px] text-muted-foreground",
+        "text-caption2 text-muted-foreground",
         vertical ? "flex flex-col gap-1.5" : "flex flex-wrap gap-x-3 gap-y-1",
       )}
     >
@@ -423,7 +443,7 @@ export function ChartLegend({
         <li key={it.label + i} className="flex items-center gap-1.5">
           <span
             aria-hidden="true"
-            className="inline-block size-2 shrink-0 rounded-[2px]"
+            className="inline-block size-2 shrink-0 rounded-sm"
             style={{ background: it.color ?? GREEN_SHADES[i % GREEN_SHADES.length] }}
           />
           <span className="truncate">{it.label}</span>

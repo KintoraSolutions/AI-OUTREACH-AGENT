@@ -171,7 +171,7 @@ export function ScoringRulesForm({
               id="rules-reason"
               value={reason}
               onChange={(e) => setReason(e.target.value)}
-              placeholder="e.g. Increase KlearQ weighting for multi-location clinics"
+              placeholder="e.g. Increase phone-operations weighting for multi-location clinics"
               maxLength={500}
             />
           </div>

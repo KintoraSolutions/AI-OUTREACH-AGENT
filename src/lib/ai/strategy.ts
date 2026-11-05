@@ -5,10 +5,12 @@ import type {
   OutreachStrategy,
   StrategySelection,
 } from "@/lib/ai/draft-types";
-import { SERVICE_LABELS } from "@/lib/leads/constants";
+import { FINDING_CATEGORY_LABELS, SERVICE_LABELS } from "@/lib/leads/constants";
+import type { OfferingSlot } from "@/lib/ai/org-ai-profile";
+import type { EvidencePolicy } from "@/lib/ai/use-cases";
 
 /**
- * Stage A (plan.md Section 7): choose and explain the strongest outreach
+ * Stage A (docs/planning/build-plan.md Section 7): choose and explain the strongest outreach
  * strategy from the stored score, recommendation, findings, and any manual
  * override. Pure and deterministic.
  *
@@ -29,21 +31,81 @@ const SERVICE_TO_CATEGORY: Partial<Record<RecommendedService, FindingCategory>> 
   KLEARQ: FindingCategory.KLEARQ,
 };
 
-const CATEGORY_LABEL: Record<string, string> = {
-  WEBSITE: "website",
-  SOFTWARE: "custom software",
-  KLEARQ: "KlearQ phone management",
+/**
+ * Area names used in the stored `strategyReason`. Neutral by default and
+ * overridable from the org's AI profile, so a saved explanation never carries a
+ * product name the organization does not use.
+ */
+const DEFAULT_CATEGORY_LABEL: Record<string, string> = {
+  WEBSITE: FINDING_CATEGORY_LABELS.WEBSITE.toLowerCase(),
+  SOFTWARE: FINDING_CATEGORY_LABELS.SOFTWARE.toLowerCase(),
+  KLEARQ: FINDING_CATEGORY_LABELS.KLEARQ.toLowerCase(),
+};
+
+export interface StrategyOptions {
+  /** Use-case evidence policy. Defaults to the opportunity-driven service pitch. */
+  policy?: EvidencePolicy;
+  /** Slot of the org's primary offering, used as the storage bucket for intros. */
+  primarySlot?: OfferingSlot | null;
+  /** The org's names for each area/service, used in the stored explanation. */
+  categoryLabels?: Record<string, string>;
+  serviceLabels?: Record<string, string>;
+}
+
+const DEFAULT_POLICY: EvidencePolicy = {
+  citableCategories: [FindingCategory.WEBSITE, FindingCategory.SOFTWARE, FindingCategory.KLEARQ],
+  allowClaimFreeIntro: false,
+  requireOpportunityEvidence: true,
 };
 
 export function selectStrategy(
   score: DraftScoreSummary,
   citableEvidence: EvidenceItem[],
+  options: StrategyOptions | EvidencePolicy = {},
 ): StrategySelection {
+  // Accept a bare policy for convenience.
+  const opts: StrategyOptions =
+    "requireOpportunityEvidence" in options ? { policy: options } : options;
+  const policy = opts.policy ?? DEFAULT_POLICY;
+  const CATEGORY_LABEL = opts.categoryLabels ?? DEFAULT_CATEGORY_LABEL;
+  const SERVICE_LABEL = opts.serviceLabels ?? SERVICE_LABELS;
+
   const overrideApplied = score.manualOverride && score.effectiveService !== score.computedService;
   const service = score.effectiveService;
 
   const evidenceFor = (cat: FindingCategory) =>
     citableEvidence.filter((e) => e.category === cat);
+
+  // ---------------------------------------------------------------------
+  // Relationship-style outreach (e.g. referrals): the email is not pitched off
+  // an "opportunity" found on the recipient's site. It is grounded in verified
+  // context about them, and an introduction that claims nothing about them at
+  // all is a legitimate outcome rather than a blocked draft.
+  // ---------------------------------------------------------------------
+  if (!policy.requireOpportunityEvidence) {
+    const supporting = sortStrong(
+      citableEvidence.filter((e) => policy.citableCategories.includes(e.category)),
+    );
+    if (supporting.length === 0 && !policy.allowClaimFreeIntro) {
+      return insufficient("There is no citable context about this recipient to ground an email.");
+    }
+    // `service` is only a storage bucket here: the offering being introduced is
+    // usually not tied to an opportunity area at all.
+    const bucket: RecommendedService =
+      (opts.primarySlot as RecommendedService | null | undefined) ??
+      (SERVICE_TO_CATEGORY[service] ? service : RecommendedService.WEBSITE);
+    return {
+      strategy: bucket as OutreachStrategy,
+      service: bucket,
+      reason:
+        supporting.length > 0
+          ? `Introduction grounded in ${supporting.length} verified detail(s) about the recipient.`
+          : "Introduction that makes no claim about the recipient; there is no verified context to cite.",
+      supportingEvidence: supporting,
+      overrideApplied: false,
+      onlyInference: supporting.length > 0 && supporting.every((e) => !e.isFact),
+    };
+  }
 
   // Insufficient evidence: the score itself recommends nothing actionable.
   if (service === RecommendedService.NONE) {
@@ -102,15 +164,15 @@ export function selectStrategy(
   if (supporting.length === 0) {
     return insufficient(
       overrideApplied
-        ? `A manual override selected ${SERVICE_LABELS[service]}, but there is no citable ${CATEGORY_LABEL[cat]} evidence to ground that pitch. An override does not by itself create evidence.`
-        : `${SERVICE_LABELS[service]} is recommended, but no citable ${CATEGORY_LABEL[cat]} evidence is available to ground a specific email.`,
+        ? `A manual override selected ${SERVICE_LABEL[service]}, but there is no citable ${CATEGORY_LABEL[cat]} evidence to ground that pitch. An override does not by itself create evidence.`
+        : `${SERVICE_LABEL[service]} is recommended, but no citable ${CATEGORY_LABEL[cat]} evidence is available to ground a specific email.`,
     );
   }
 
   return {
     strategy: service as OutreachStrategy,
     service,
-    reason: `${SERVICE_LABELS[service]} is the strongest supported opportunity, grounded in ${supporting.length} observation(s).${overrideNote(overrideApplied)}`,
+    reason: `${SERVICE_LABEL[service]} is the strongest supported opportunity, grounded in ${supporting.length} observation(s).${overrideNote(overrideApplied)}`,
     supportingEvidence: sortStrong(supporting),
     overrideApplied,
     onlyInference: supporting.every((e) => !e.isFact),

@@ -8,29 +8,30 @@ import {
   Star,
   Plus,
   Search,
-  LayoutGrid,
+  FileText,
   BarChart3,
   TrendingUp,
   PieChart,
+  Tags,
+  Target,
+  Gauge as GaugeIcon,
+  AlertCircle,
+  Compass,
+  Clock,
 } from "lucide-react";
-import { DraftStatus, PipelineStage, RecommendedService } from "@prisma/client";
+import { DraftStatus, PipelineStage, Prisma, RecommendedService } from "@prisma/client";
 import { prisma } from "@/lib/db";
 import { requireOrgContext } from "@/lib/auth/rbac";
+import { loadChecklistState } from "@/lib/onboarding/checklist";
 import { STAGE_LABELS, SERVICE_LABELS } from "@/lib/leads/constants";
-import { buildEffectiveScoreWhere } from "@/lib/leads/score-filter";
 import { PageHeader } from "@/components/app/page-header";
 import { MetricTile } from "@/components/app/metric-tile";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { GettingStarted } from "@/components/app/getting-started";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { EmptyState } from "@/components/app/empty-state";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import {
-  BarChart,
-  StackedBarChart,
-  DonutChart,
-  ChartLegend,
-  GREEN_SHADES,
-  NEUTRAL_SHADE,
-} from "@/components/app/charts";
+import { BarChart, StackedBarChart, DonutChart, ChartLegend } from "@/components/app/charts";
 
 const CONTACTED_STAGES = [PipelineStage.CONTACTED, PipelineStage.REPLIED, PipelineStage.MEETING_BOOKED];
 const RESPONSE_STAGES = [PipelineStage.REPLIED, PipelineStage.MEETING_BOOKED];
@@ -55,30 +56,47 @@ const SERVICE_ORDER: RecommendedService[] = [
   RecommendedService.NONE,
 ];
 
-function BreakdownList({
-  rows,
-  emptyLabel = "No data.",
-}: {
-  rows: { label: string; count: number }[];
-  emptyLabel?: string;
-}) {
-  const nonZero = rows.filter((r) => r.count > 0);
-  if (nonZero.length === 0) {
-    return <p className="text-sm text-muted-foreground">{emptyLabel}</p>;
-  }
+/**
+ * Chart palette.
+ *
+ * `charts.tsx` ships a fixed set of green hex values that do not theme-switch,
+ * so every series here passes its own color instead. One brand hue stepped down
+ * toward a neutral fill is the right treatment for ordered categories (pipeline
+ * stage, lead source): it reads as a single scale rather than as five unrelated
+ * things, and because every step is expressed in `--fl-*` tokens it re-derives
+ * itself in dark mode. Category is never the only signal — every chart here is
+ * paired with a labelled legend carrying the values.
+ */
+const SERIES_COLORS = [
+  "var(--fl-brand-text)",
+  "color-mix(in srgb, var(--fl-brand-text) 70%, var(--fl-bg-4))",
+  "color-mix(in srgb, var(--fl-brand-text) 45%, var(--fl-bg-4))",
+  "color-mix(in srgb, var(--fl-brand-text) 25%, var(--fl-bg-4))",
+] as const;
+const OTHER_COLOR = "var(--fl-fg-4)";
+
+/** Horizontal bar list for a labelled count breakdown. */
+function BreakdownList({ rows }: { rows: { label: string; count: number }[] }) {
   const max = Math.max(1, ...rows.map((r) => r.count));
   return (
     <ul className="space-y-2.5">
       {rows.map((r) => (
-        <li key={r.label} className="flex items-center gap-3 text-sm">
-          <span className="w-40 shrink-0 truncate text-muted-foreground">{r.label}</span>
-          <span className="h-2 flex-1 overflow-hidden rounded-full bg-[var(--surface-3)]">
+        <li
+          key={r.label}
+          className="grid grid-cols-[minmax(0,7.5rem)_1fr_2rem] items-center gap-3 text-body1"
+        >
+          <span className="truncate text-[var(--fl-fg-2)]">{r.label}</span>
+          {/* The bar restates the number beside it, so it is decoration. */}
+          <span
+            aria-hidden="true"
+            className="h-2 overflow-hidden rounded-sm bg-[var(--fl-bg-4)]"
+          >
             <span
-              className="block h-full rounded-full bg-[var(--mint)]"
+              className="block h-full rounded-sm bg-[var(--fl-brand)]"
               style={{ width: `${(r.count / max) * 100}%` }}
             />
           </span>
-          <span className="stat w-8 shrink-0 text-right text-foreground">{r.count}</span>
+          <span className="stat text-right font-semibold text-[var(--fl-fg-1)]">{r.count}</span>
         </li>
       ))}
     </ul>
@@ -92,41 +110,60 @@ export default async function DashboardPage() {
   // Analytics window: the last 6 ISO weeks of lead intake.
   const weekCutoff = new Date(now.getTime() - 6 * 7 * 24 * 60 * 60 * 1000);
 
-  // Score-bucket and service-mix counts use EFFECTIVE values (an active manual
-  // override wins over the computed score/service), matching the lead table.
-  const bucketWhere = SCORE_BUCKETS.map((b) => ({
-    orgId: ctx.orgId,
-    scores: { some: buildEffectiveScoreWhere({ minScore: b.min, maxScore: b.max })! },
-  }));
-  const serviceWhere = SERVICE_ORDER.map((s) => ({
-    orgId: ctx.orgId,
-    scores: { some: buildEffectiveScoreWhere({ service: s })! },
-  }));
+  // Score-bucket, service-mix, high-priority, and scored counts all use EFFECTIVE
+  // values (an active manual override wins over the computed score/service),
+  // matching the lead table. These are computed in ONE grouped query over
+  // Clinic⋈LeadScore below (scoreAggSql) instead of 12 correlated COUNT
+  // subqueries. LeadScore is 1:1 with Clinic (@@unique clinicId), so the INNER
+  // JOIN cannot fan out, and the CASE expressions mirror effectiveOverallOf /
+  // effectiveServiceOf exactly (override wins only when active AND set).
+  const bucketCols = SCORE_BUCKETS.map(
+    (b, i) =>
+      Prisma.sql`count(*) FILTER (WHERE eff_overall BETWEEN ${b.min} AND ${b.max}) AS ${Prisma.raw(`bucket_${i}`)}`,
+  );
+  const serviceCols = SERVICE_ORDER.map(
+    (s, i) => Prisma.sql`count(*) FILTER (WHERE eff_service = ${s}) AS ${Prisma.raw(`svc_${i}`)}`,
+  );
+  const scoreAggSql = Prisma.sql`
+    SELECT
+      count(*) AS scored,
+      count(*) FILTER (WHERE eff_overall >= ${HIGH_PRIORITY_THRESHOLD}) AS high_priority,
+      ${Prisma.join(bucketCols, ", ")},
+      ${Prisma.join(serviceCols, ", ")}
+    FROM (
+      SELECT
+        (CASE WHEN s."manualOverride" AND s."overrideOverall" IS NOT NULL
+              THEN s."overrideOverall" ELSE s."overallScore" END) AS eff_overall,
+        (CASE WHEN s."manualOverride" AND s."overrideService" IS NOT NULL
+              THEN s."overrideService" ELSE s."recommendedService" END)::text AS eff_service
+      FROM "Clinic" c
+      JOIN "LeadScore" s ON s."clinicId" = c.id
+      WHERE c."orgId" = ${ctx.orgId}
+    ) t
+  `;
 
   const [
     total,
     newLeads,
-    highPriority,
     needsReview,
     draftsAwaitingReview,
     contacted,
     responses,
     followUpsDue,
-    scoredCount,
     followUpReminders,
     byCategory,
     byStage,
-    bucketCounts,
-    serviceCounts,
     convGroups,
     campaignsList,
     weeklyRows,
+    scoreAggRows,
+    // The setup checklist joins this batch rather than loading inside
+    // <GettingStarted/>, which would put its seven counts in a second
+    // round-trip serialized after everything above.
+    checklist,
   ] = await Promise.all([
     prisma.clinic.count({ where }),
     prisma.clinic.count({ where: { ...where, stage: PipelineStage.DISCOVERED } }),
-    prisma.clinic.count({
-      where: { ...where, scores: { some: buildEffectiveScoreWhere({ minScore: HIGH_PRIORITY_THRESHOLD })! } },
-    }),
     prisma.clinic.count({ where: { ...where, stage: PipelineStage.NEEDS_REVIEW } }),
     prisma.emailDraft.count({
       where: { clinic: { orgId: ctx.orgId }, status: { in: REVIEW_DRAFT_STATUSES } },
@@ -136,7 +173,6 @@ export default async function DashboardPage() {
     prisma.followUpTask.count({
       where: { orgId: ctx.orgId, status: "PENDING", dueDate: { lte: now } },
     }),
-    prisma.clinic.count({ where: { ...where, scores: { some: {} } } }),
     prisma.followUpTask.findMany({
       where: { orgId: ctx.orgId, status: "PENDING" },
       orderBy: { dueDate: "asc" },
@@ -148,8 +184,6 @@ export default async function DashboardPage() {
     }),
     prisma.clinic.groupBy({ by: ["category"], where, _count: { _all: true } }),
     prisma.clinic.groupBy({ by: ["stage"], where, _count: { _all: true } }),
-    Promise.all(bucketWhere.map((w) => prisma.clinic.count({ where: w }))),
-    Promise.all(serviceWhere.map((w) => prisma.clinic.count({ where: w }))),
     // Campaign conversion: per-campaign lead counts by stage (real pipeline).
     prisma.clinic.groupBy({
       by: ["campaignId", "stage"],
@@ -170,7 +204,17 @@ export default async function DashboardPage() {
       GROUP BY 1, 2
       ORDER BY 1
     `,
+    prisma.$queryRaw<Array<Record<string, bigint>>>(scoreAggSql),
+    loadChecklistState(ctx.orgId),
   ]);
+
+  // Derive the four score aggregates from the single grouped query. Column order
+  // matches SCORE_BUCKETS / SERVICE_ORDER; Postgres count() returns bigint.
+  const aggRow = scoreAggRows[0];
+  const highPriority = Number(aggRow?.high_priority ?? 0);
+  const scoredCount = Number(aggRow?.scored ?? 0);
+  const bucketCounts = SCORE_BUCKETS.map((_b, i) => Number(aggRow?.[`bucket_${i}`] ?? 0));
+  const serviceCounts = SERVICE_ORDER.map((_s, i) => Number(aggRow?.[`svc_${i}`] ?? 0));
 
   const reminderRows = followUpReminders.map((f) => ({
     id: f.id,
@@ -193,7 +237,10 @@ export default async function DashboardPage() {
     .sort((a, b) => b.count - a.count);
 
   const scoreRows = SCORE_BUCKETS.map((b, i) => ({ label: b.label, count: bucketCounts[i] ?? 0 }));
-  const serviceRows = SERVICE_ORDER.map((s, i) => ({ label: SERVICE_LABELS[s], count: serviceCounts[i] ?? 0 }));
+  const serviceRows = SERVICE_ORDER.map((s, i) => ({
+    label: SERVICE_LABELS[s],
+    count: serviceCounts[i] ?? 0,
+  }));
 
   // --- Analytics strip (all real, org-scoped) ---------------------------------
   // Campaign conversion = share of a campaign's leads that reached a response stage.
@@ -230,209 +277,386 @@ export default async function DashboardPage() {
       values,
     }));
   const sourceSeries = [
-    { label: "Research", color: GREEN_SHADES[0] },
-    { label: "CSV import", color: GREEN_SHADES[1] },
-    { label: "Manual", color: GREEN_SHADES[2] },
+    { label: "Research", color: SERIES_COLORS[0] },
+    { label: "CSV import", color: SERIES_COLORS[1] },
+    { label: "Manual", color: SERIES_COLORS[2] },
   ];
+  const hasWeekly = weekly.some((w) => w.values.some((v) => v > 0));
 
-  // Lead distribution by stage (top 4 stages + Other) for the donut.
+  // Lead distribution by stage (top 4 stages + Other) for the donut. This is now
+  // the ONLY stage visualization on the page: it previously rendered twice, once
+  // as this donut and again as a "Leads by stage" bar list directly below it.
   const stageTop = stageRows.filter((r) => r.count > 0).slice(0, 4);
   const stageRest = stageRows.slice(4).reduce((a, r) => a + r.count, 0);
   const stageDist: { label: string; value: number; color: string }[] = stageTop.map((r, i) => ({
     label: r.label,
     value: r.count,
-    color: GREEN_SHADES[i] ?? NEUTRAL_SHADE,
+    color: SERIES_COLORS[i] ?? OTHER_COLOR,
   }));
-  if (stageRest > 0) stageDist.push({ label: "Other", value: stageRest, color: NEUTRAL_SHADE });
+  if (stageRest > 0) stageDist.push({ label: "Other", value: stageRest, color: OTHER_COLOR });
+
+  const updatedLabel = now.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-5">
       <PageHeader
         title="Dashboard"
         description={`Pipeline overview for ${ctx.orgName}.`}
         actions={
-          <Button asChild>
-            <Link href="/leads/new">
-              <Plus />
-              New lead
-            </Link>
-          </Button>
+          <>
+            <Button asChild variant="outline">
+              <Link href="/tutorial">
+                <Compass aria-hidden="true" />
+                Guided tour
+              </Link>
+            </Button>
+            <Button asChild>
+              <Link href="/leads/new">
+                <Plus aria-hidden="true" />
+                New lead
+              </Link>
+            </Button>
+          </>
         }
       />
+
+      {/* What to do next comes before how things are going: a brand-new org has
+          no pipeline to report on, and even a busy one benefits from the next
+          unfinished setup step sitting above the numbers. */}
+      <GettingStarted state={checklist} />
 
       {total === 0 ? (
         <EmptyState
           icon={Users}
           title="Your pipeline is empty"
-          description="Add clinics manually or import a CSV, or run a research campaign to discover and score clinics automatically."
+          description="Add clinics manually or import a CSV, then run a research campaign to score them. Manually added leads have no findings and no score until a campaign researches them."
           action={
-            <div className="flex gap-2">
+            <div className="flex flex-wrap justify-center gap-2">
               <Button asChild size="sm">
                 <Link href="/leads/new">New lead</Link>
               </Button>
               <Button asChild size="sm" variant="outline">
                 <Link href="/leads/import">Import CSV</Link>
               </Button>
+              <Button asChild size="sm" variant="outline">
+                <Link href="/campaigns/new">Create a campaign</Link>
+              </Button>
             </div>
           }
         />
       ) : (
         <>
-          <div className="grid gap-3 sm:grid-cols-2">
-            <MetricTile label="Total leads" value={total} icon={Users} accent />
-            <MetricTile
-              label="New leads"
-              value={newLeads}
-              icon={Sparkles}
-              hint="Stage: Discovered"
-              accent
-            />
-            <MetricTile
-              label="High priority"
-              value={highPriority}
-              icon={Star}
-              hint={`Score ≥ ${HIGH_PRIORITY_THRESHOLD}`}
-            />
-            <MetricTile label="Needs review" value={needsReview} icon={Search} hint="Stage: Needs review" />
-            <MetricTile
-              label="Drafts awaiting review"
-              value={draftsAwaitingReview}
-              icon={LayoutGrid}
-              hint="Generated or edited"
-              accent
-            />
-            <MetricTile label="Contacted" value={contacted} icon={Send} />
-            <MetricTile label="Responses" value={responses} icon={MessageSquare} />
-            <MetricTile label="Follow-ups due" value={followUpsDue} icon={CalendarClock} />
-          </div>
+          <section aria-labelledby="kpi-heading" className="space-y-3">
+            <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
+              <h2 id="kpi-heading" className="text-subtitle2 font-semibold text-[var(--fl-fg-1)]">
+                Pipeline at a glance
+              </h2>
+              <p className="flex items-center gap-1.5 text-caption1 text-[var(--fl-fg-3)]">
+                <Clock aria-hidden="true" className="size-3.5" strokeWidth={1.75} />
+                Last updated{" "}
+                <time dateTime={now.toISOString()} className="stat">
+                  {updatedLabel}
+                </time>
+              </p>
+            </div>
 
-          <section aria-label="Analytics" className="grid gap-3 lg:grid-cols-3">
-            <Card className="rounded-[7px] lg:col-span-2">
-              <div className="flex items-center justify-between px-4 pb-1 pt-4">
-                <h3 className="text-[13px] font-semibold tracking-[-0.01em]">
-                  Campaign Conversion over Time
-                </h3>
-                <BarChart3 className="size-4 shrink-0 text-[var(--faint-foreground)]" strokeWidth={1.75} />
-              </div>
-              <div className="px-3 pb-3">
-                <BarChart data={campaignConv} emptyLabel="No campaigns to compare yet." />
-              </div>
-            </Card>
+            {/* Four leading numbers, four-up on a wide screen. The other four are
+                secondary and get a dense strip rather than equal billing. */}
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+              <MetricTile label="Total leads" value={total} icon={Users} href="/leads" accent />
+              <MetricTile
+                label="High priority"
+                value={highPriority}
+                icon={Star}
+                hint={`Score ${HIGH_PRIORITY_THRESHOLD} or higher`}
+                href={`/leads?minScore=${HIGH_PRIORITY_THRESHOLD}`}
+                accent
+              />
+              <MetricTile
+                label="Drafts awaiting review"
+                value={draftsAwaitingReview}
+                icon={FileText}
+                hint="Nothing sends on its own"
+                href="/review"
+                accent
+              />
+              <MetricTile
+                label="Follow-ups due"
+                value={followUpsDue}
+                icon={CalendarClock}
+                hint="See the list below"
+                href="#follow-ups"
+              />
+            </div>
 
-            <div className="flex flex-col gap-3">
-              <Card className="rounded-[7px]">
-                <div className="flex items-center justify-between px-4 pb-1 pt-4">
-                  <h3 className="text-[13px] font-semibold leading-tight tracking-[-0.01em]">
-                    Weekly Lead Intake
-                  </h3>
-                  <TrendingUp className="size-4 shrink-0 text-[var(--faint-foreground)]" strokeWidth={1.75} />
-                </div>
-                <div className="space-y-2 px-3 pb-3">
-                  <StackedBarChart data={weekly} series={sourceSeries} />
-                  <div className="px-1">
-                    <ChartLegend items={sourceSeries} />
+            {/* The secondary strip goes four-up only at xl. A compact tile packs
+                its icon, label, value and chevron onto one row, and at the lg
+                breakpoint exactly (1024px) that leaves ~173px, which clipped
+                "New leads" and "Needs review". Two-up holds them intact. */}
+            <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+              <MetricTile
+                label="New leads"
+                value={newLeads}
+                icon={Sparkles}
+                hint="Discovered"
+                href={`/leads?stage=${PipelineStage.DISCOVERED}`}
+                compact
+              />
+              <MetricTile
+                label="Needs review"
+                value={needsReview}
+                icon={Search}
+                hint="Needs review"
+                href={`/leads?stage=${PipelineStage.NEEDS_REVIEW}`}
+                compact
+              />
+              <MetricTile label="Contacted" value={contacted} icon={Send} compact />
+              <MetricTile label="Responses" value={responses} icon={MessageSquare} compact />
+            </div>
+          </section>
+
+          <section aria-labelledby="analytics-heading" className="space-y-3">
+            <h2 id="analytics-heading" className="sr-only">
+              Analytics
+            </h2>
+            <div className="grid gap-3 lg:grid-cols-3">
+              <Card className="lg:col-span-2">
+                <CardHeader className="flex-row items-start justify-between gap-3">
+                  <div className="space-y-1">
+                    <CardTitle>Campaign conversion</CardTitle>
+                    <CardDescription>
+                      Share of each campaign&apos;s leads that replied or booked a meeting.
+                    </CardDescription>
                   </div>
-                </div>
+                  <BarChart3
+                    aria-hidden="true"
+                    className="size-4 shrink-0 text-[var(--fl-fg-3)]"
+                    strokeWidth={1.75}
+                  />
+                </CardHeader>
+                <CardContent>
+                  {campaignConv.length > 0 ? (
+                    <BarChart data={campaignConv} />
+                  ) : (
+                    <EmptyState
+                      size="sm"
+                      icon={Target}
+                      title="No campaigns yet"
+                      description="A research campaign is the only way to research and score a clinic."
+                      action={
+                        <Button asChild size="sm">
+                          <Link href="/campaigns/new">Create a campaign</Link>
+                        </Button>
+                      }
+                    />
+                  )}
+                </CardContent>
               </Card>
 
-              <Card className="rounded-[7px]">
-                <div className="flex items-center justify-between px-4 pb-1 pt-4">
-                  <h3 className="text-[13px] font-semibold leading-tight tracking-[-0.01em]">
-                    Lead Distribution by Stage
-                  </h3>
-                  <PieChart className="size-4 shrink-0 text-[var(--faint-foreground)]" strokeWidth={1.75} />
-                </div>
-                <div className="flex items-center gap-3 px-4 pb-4 pt-1">
-                  <DonutChart data={stageDist} />
-                  <ChartLegend items={stageDist} vertical showValues />
-                </div>
+              <div className="flex flex-col gap-3">
+                <Card>
+                  <CardHeader className="flex-row items-start justify-between gap-3">
+                    <div className="space-y-1">
+                      <CardTitle>Weekly lead intake</CardTitle>
+                      <CardDescription>New leads per week, by source.</CardDescription>
+                    </div>
+                    <TrendingUp
+                      aria-hidden="true"
+                      className="size-4 shrink-0 text-[var(--fl-fg-3)]"
+                      strokeWidth={1.75}
+                    />
+                  </CardHeader>
+                  <CardContent className="space-y-2">
+                    {hasWeekly ? (
+                      <>
+                        <StackedBarChart data={weekly} series={sourceSeries} />
+                        <ChartLegend items={sourceSeries} />
+                      </>
+                    ) : (
+                      <EmptyState
+                        size="sm"
+                        icon={TrendingUp}
+                        title="No leads in the last 6 weeks"
+                        description="Add or import leads and this fills in week by week."
+                      />
+                    )}
+                  </CardContent>
+                </Card>
+
+                <Card>
+                  <CardHeader className="flex-row items-start justify-between gap-3">
+                    <div className="space-y-1">
+                      <CardTitle>Leads by stage</CardTitle>
+                      <CardDescription>Where your pipeline currently sits.</CardDescription>
+                    </div>
+                    <PieChart
+                      aria-hidden="true"
+                      className="size-4 shrink-0 text-[var(--fl-fg-3)]"
+                      strokeWidth={1.75}
+                    />
+                  </CardHeader>
+                  <CardContent className="flex items-center gap-4">
+                    <DonutChart data={stageDist} />
+                    <ChartLegend items={stageDist} vertical showValues />
+                  </CardContent>
+                </Card>
+              </div>
+            </div>
+          </section>
+
+          <section aria-labelledby="breakdown-heading" className="space-y-3">
+            <h2
+              id="breakdown-heading"
+              className="text-subtitle2 font-semibold text-[var(--fl-fg-1)]"
+            >
+              Breakdowns
+            </h2>
+            <div className="grid gap-3 lg:grid-cols-3">
+              <Card>
+                <CardHeader className="flex-row items-start justify-between gap-3">
+                  <CardTitle>Leads by category</CardTitle>
+                  <Tags
+                    aria-hidden="true"
+                    className="size-4 shrink-0 text-[var(--fl-fg-3)]"
+                    strokeWidth={1.75}
+                  />
+                </CardHeader>
+                <CardContent>
+                  {categoryRows.length > 0 ? (
+                    <BreakdownList rows={categoryRows} />
+                  ) : (
+                    <EmptyState
+                      size="sm"
+                      icon={Tags}
+                      title="No categories yet"
+                      description="Categories come from research, or from the category field on a lead."
+                    />
+                  )}
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardHeader className="flex-row items-start justify-between gap-3">
+                  <CardTitle>Recommended service</CardTitle>
+                  <Target
+                    aria-hidden="true"
+                    className="size-4 shrink-0 text-[var(--fl-fg-3)]"
+                    strokeWidth={1.75}
+                  />
+                </CardHeader>
+                <CardContent>
+                  {scoredCount > 0 ? (
+                    <BreakdownList rows={serviceRows} />
+                  ) : (
+                    <EmptyState
+                      size="sm"
+                      icon={Target}
+                      title="Nothing scored yet"
+                      description="A recommendation is produced when a lead is scored."
+                      action={
+                        <Button asChild size="sm" variant="outline">
+                          <Link href="/help/how-scoring-works">How scoring works</Link>
+                        </Button>
+                      }
+                    />
+                  )}
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardHeader className="flex-row items-start justify-between gap-3">
+                  <CardTitle>Score distribution</CardTitle>
+                  <GaugeIcon
+                    aria-hidden="true"
+                    className="size-4 shrink-0 text-[var(--fl-fg-3)]"
+                    strokeWidth={1.75}
+                  />
+                </CardHeader>
+                <CardContent>
+                  {scoredCount > 0 ? (
+                    <BreakdownList rows={scoreRows} />
+                  ) : (
+                    <EmptyState
+                      size="sm"
+                      icon={GaugeIcon}
+                      title="Nothing scored yet"
+                      description="Leads are scored by a research campaign. Adding a lead by hand or by CSV does not score it."
+                      action={
+                        <Button asChild size="sm">
+                          <Link href="/campaigns/new">Create a campaign</Link>
+                        </Button>
+                      }
+                    />
+                  )}
+                </CardContent>
               </Card>
             </div>
           </section>
 
-          <div className="grid gap-6 lg:grid-cols-2">
+          <section aria-labelledby="followups-heading" id="follow-ups" className="scroll-mt-20">
+            <h2 id="followups-heading" className="sr-only">
+              Follow-ups
+            </h2>
             <Card>
-              <CardHeader>
-                <CardTitle>Leads by category</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <BreakdownList rows={categoryRows} />
-              </CardContent>
-            </Card>
-            <Card>
-              <CardHeader>
-                <CardTitle>Leads by stage</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <BreakdownList rows={stageRows} />
-              </CardContent>
-            </Card>
-          </div>
-
-          <div className="grid gap-6 lg:grid-cols-2">
-            <Card>
-              <CardHeader>
-                <CardTitle>Recommended service mix</CardTitle>
-              </CardHeader>
-              <CardContent>
-                {scoredCount > 0 ? (
-                  <BreakdownList rows={serviceRows} />
-                ) : (
-                  <p className="text-sm text-muted-foreground">
-                    No leads scored yet. Run a research campaign or score leads to populate this.
-                  </p>
-                )}
-              </CardContent>
-            </Card>
-            <Card>
-              <CardHeader>
-                <CardTitle>Lead-score distribution</CardTitle>
-              </CardHeader>
-              <CardContent>
-                {scoredCount > 0 ? (
-                  <BreakdownList rows={scoreRows} />
-                ) : (
-                  <p className="text-sm text-muted-foreground">
-                    No leads scored yet. Scores appear here once the research engine or a manual audit runs.
-                  </p>
-                )}
-              </CardContent>
-            </Card>
-          </div>
-
-          <Card>
-            <CardHeader>
-              <CardTitle>Follow-up reminders</CardTitle>
+            <CardHeader className="flex-row items-start justify-between gap-3">
+              <div className="space-y-1">
+                <CardTitle>Follow-up reminders</CardTitle>
+                <CardDescription>The next eight pending tasks, soonest first.</CardDescription>
+              </div>
+              <CalendarClock
+                aria-hidden="true"
+                className="size-4 shrink-0 text-[var(--fl-fg-3)]"
+                strokeWidth={1.75}
+              />
             </CardHeader>
             <CardContent>
               {reminderRows.length > 0 ? (
-                <ul className="divide-y">
+                <ul className="divide-y divide-[var(--hairline)]">
                   {reminderRows.map((r) => (
-                    <li key={r.id} className="flex flex-wrap items-center justify-between gap-2 py-2 text-sm">
-                      <span className="flex items-center gap-2">
-                        <CalendarClock className="h-4 w-4 text-muted-foreground" />
-                        <Link href={`/leads/${r.clinicId}`} className="font-medium text-primary hover:underline">
+                    <li
+                      key={r.id}
+                      className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 py-2.5 text-body1 first:pt-0 last:pb-0"
+                    >
+                      <span className="flex min-w-0 flex-wrap items-center gap-2">
+                        <Link
+                          href={`/leads/${r.clinicId}`}
+                          className="rounded-md font-semibold text-[var(--fl-brand-text)] hover:underline"
+                        >
                           {r.clinicName}
                         </Link>
-                        {r.title ? <span className="text-muted-foreground">— {r.title}</span> : null}
+                        {r.title ? (
+                          <span className="truncate text-[var(--fl-fg-2)]">{r.title}</span>
+                        ) : null}
                         {r.overdue ? (
-                          <span className="rounded-[5px] border border-[color-mix(in_srgb,var(--red)_35%,transparent)] bg-[var(--red-dim)] px-1.5 py-0.5 font-mono text-[10.5px] uppercase tracking-[0.08em] text-[var(--red-bright)]">
+                          <Badge tone="danger">
+                            <AlertCircle aria-hidden="true" />
                             Overdue
-                          </span>
+                          </Badge>
                         ) : null}
                       </span>
-                      <span className="text-xs text-muted-foreground">
+                      <span className="stat shrink-0 text-caption1 text-[var(--fl-fg-3)]">
                         {r.priority.toLowerCase()} · {r.assignee} ·{" "}
-                        {r.dueDate.toLocaleDateString(undefined, { month: "short", day: "numeric" })}
+                        <time dateTime={r.dueDate.toISOString()}>
+                          {r.dueDate.toLocaleDateString(undefined, {
+                            month: "short",
+                            day: "numeric",
+                          })}
+                        </time>
                       </span>
                     </li>
                   ))}
                 </ul>
               ) : (
-                <p className="text-sm text-muted-foreground">No pending follow-ups.</p>
+                <EmptyState
+                  size="sm"
+                  icon={CalendarClock}
+                  title="No pending follow-ups"
+                  description="Schedule a follow-up from a lead's page to see it here."
+                />
               )}
             </CardContent>
-          </Card>
+            </Card>
+          </section>
         </>
       )}
     </div>

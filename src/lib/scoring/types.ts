@@ -1,7 +1,7 @@
 import type { Confidence, FindingCategory, RecommendedService } from "@prisma/client";
 
 /**
- * Contracts for the deterministic lead-scoring engine (plan.md Section 6A).
+ * Contracts for the deterministic lead-scoring engine (docs/planning/build-plan.md Section 6A).
  * Everything here is pure and provider-agnostic: the engine turns audit findings
  * (evidence) plus an org's scoring configuration into an explainable 0-100 score
  * and a service recommendation. No Prisma, no I/O.

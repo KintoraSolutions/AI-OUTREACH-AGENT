@@ -10,6 +10,7 @@ import { Select } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { Field } from "@/components/ui/field";
 import { SubmitButton } from "@/components/app/submit-button";
+import { ReasonDialog } from "@/components/app/reason-dialog";
 import { CONFIDENCE_LABELS, FINDING_CATEGORY_LABELS } from "@/lib/leads/constants";
 import { initialFormState } from "@/lib/actions/form";
 import { addManualFinding, dismissFinding, restoreFinding } from "@/app/(dashboard)/leads/audit-actions";
@@ -22,30 +23,45 @@ export function FindingDismissButton({
   dismissed: boolean;
 }) {
   const [pending, start] = useTransition();
+  const [open, setOpen] = useState(false);
   const router = useRouter();
+
+  function confirm(reason: string) {
+    start(async () => {
+      const res = dismissed
+        ? await restoreFinding(findingId, reason)
+        : await dismissFinding(findingId, reason);
+      if (res.ok) {
+        toast.success(res.message ?? "Updated.");
+        setOpen(false);
+        router.refresh();
+      } else toast.error(res.error ?? "Could not update finding.");
+    });
+  }
+
   return (
-    <Button
-      variant="ghost"
-      size="sm"
-      disabled={pending}
-      onClick={() => {
-        const reason = window.prompt(
-          dismissed ? "Reason for restoring this finding:" : "Reason for dismissing this finding:",
-        );
-        if (!reason) return;
-        start(async () => {
-          const res = dismissed
-            ? await restoreFinding(findingId, reason)
-            : await dismissFinding(findingId, reason);
-          if (res.ok) {
-            toast.success(res.message ?? "Updated.");
-            router.refresh();
-          } else toast.error(res.error ?? "Could not update finding.");
-        });
-      }}
-    >
-      {dismissed ? "Restore" : "Dismiss"}
-    </Button>
+    <>
+      <Button variant="ghost" size="sm" disabled={pending} onClick={() => setOpen(true)}>
+        {dismissed ? "Restore" : "Dismiss"}
+      </Button>
+      <ReasonDialog
+        open={open}
+        onOpenChange={setOpen}
+        title={dismissed ? "Restore this finding" : "Dismiss this finding"}
+        description={
+          dismissed
+            ? "The finding counts toward the score again once the lead is recalculated."
+            : "A dismissed finding scores nothing and can no longer be cited as evidence in an email."
+        }
+        label="Reason"
+        placeholder={dismissed ? "Why does this finding hold up?" : "Why is this finding wrong?"}
+        confirmLabel={dismissed ? "Restore finding" : "Dismiss finding"}
+        pendingLabel={dismissed ? "Restoring…" : "Dismissing…"}
+        pending={pending}
+        destructive={!dismissed}
+        onConfirm={confirm}
+      />
+    </>
   );
 }
 

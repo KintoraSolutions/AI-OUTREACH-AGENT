@@ -6,7 +6,7 @@ import type {
 } from "@prisma/client";
 
 /**
- * Domain types for the evidence-grounded drafting engine (plan.md Section 7).
+ * Domain types for the evidence-grounded drafting engine (docs/planning/build-plan.md Section 7).
  * Everything here is pure data: the engine reasons over stored evidence only and
  * never invents facts.
  */
@@ -40,16 +40,16 @@ export interface EvidenceItem {
   isFact: boolean;
 }
 
-/** Org identity used to fill the pitch (never hardcoded; comes from settings). */
+/**
+ * Org identity used to fill the pitch (never hardcoded; comes from settings).
+ * What the org SELLS lives in its AI profile offerings, not here.
+ */
 export interface OrgIdentity {
   companyName: string | null;
   portfolioUrl: string | null;
   contactUrl: string | null;
   senderName: string | null;
   senderEmail: string | null;
-  klearqProductName: string | null;
-  klearqTagline: string | null;
-  klearqUrl: string | null;
 }
 
 /** Clinic + recipient context for the draft. */

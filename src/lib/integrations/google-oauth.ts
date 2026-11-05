@@ -32,17 +32,28 @@ export interface GoogleTokenResponse {
 
 export function buildAuthUrl(
   cfg: GoogleOAuthClientConfig,
-  opts: { scopes: string[]; state: string; loginHint?: string | null },
+  opts: {
+    scopes: string[];
+    state: string;
+    /**
+     * Pre-highlights an account in the chooser. Only a hint — `select_account`
+     * still shows the full list, so this never traps someone on one account.
+     */
+    loginHint?: string | null;
+  },
 ): string {
   const params = new URLSearchParams({
     client_id: cfg.clientId,
     redirect_uri: cfg.redirectUri,
     response_type: "code",
     scope: opts.scopes.join(" "),
-    // Request a refresh token and force the consent screen so one is issued even
-    // on re-consent (Google only returns a refresh token with prompt=consent).
+    // `consent` so Google issues a refresh token even on re-consent, and
+    // `select_account` so the account chooser always appears. Without the
+    // latter, someone already signed into a personal Gmail in that browser is
+    // silently reconnected to it — which makes connecting a company Workspace
+    // account look impossible rather than merely hidden.
     access_type: "offline",
-    prompt: "consent",
+    prompt: "consent select_account",
     // Incremental authorization: keep any previously granted scopes.
     include_granted_scopes: "true",
     state: opts.state,

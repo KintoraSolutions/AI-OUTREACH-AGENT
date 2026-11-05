@@ -132,7 +132,31 @@ export async function runCampaign(campaignId: string): Promise<FormState> {
     data: { status: CampaignStatus.RUNNING },
   });
 
-  await runner.start(job.id, campaignId);
+  // The campaign and job rows are already written, so a throw here — the event
+  // transport being unreachable, a bad signing key — would otherwise leave the
+  // campaign stuck RUNNING behind a QUEUED job that never executes, and every
+  // retry refused as "already active". Roll both back and say what happened.
+  try {
+    await runner.start(job.id, campaignId);
+  } catch (e) {
+    await prisma.researchJob.update({
+      where: { id: job.id },
+      data: {
+        status: JobStatus.FAILED,
+        finishedAt: new Date(),
+        message: "Could not be queued for execution.",
+      },
+    });
+    await prisma.searchCampaign.update({
+      where: { id: campaignId },
+      data: { status: CampaignStatus.DRAFT },
+    });
+    revalidatePath(`/campaigns/${campaignId}`);
+    revalidatePath("/jobs");
+    return fail(
+      `Research could not be started: ${e instanceof Error ? e.message : "the job queue is unreachable"}. The campaign was left unchanged.`,
+    );
+  }
 
   revalidatePath(`/campaigns/${campaignId}`);
   revalidatePath("/jobs");
@@ -205,19 +229,43 @@ export async function cancelCampaign(campaignId: string): Promise<FormState> {
     orderBy: { createdAt: "desc" },
   });
 
-  if (job) {
+  if (job?.status === JobStatus.RUNNING) {
     // Signal the running pipeline; it finalizes the job as CANCELLED itself.
     await prisma.researchJob.update({ where: { id: job.id }, data: { cancelRequested: true } });
-  } else {
-    // No active job (e.g. paused/draft): cancel directly.
-    await prisma.searchCampaign.update({
-      where: { id: campaignId },
-      data: { status: CampaignStatus.CANCELLED },
+    revalidatePath(`/campaigns/${campaignId}`);
+    revalidatePath("/jobs");
+    return { ok: true, message: "Cancellation requested." };
+  }
+
+  // A QUEUED job has no pipeline reading `cancelRequested`, so setting the flag
+  // would do nothing. That is not hypothetical: if the background-job app is
+  // not synced to this deployment, the event is accepted but never executed and
+  // the row sits QUEUED forever — which then blocks every future run with "a
+  // research job for this campaign is already active", with no way out of the
+  // UI. Finalize it here instead.
+  if (job) {
+    await prisma.researchJob.update({
+      where: { id: job.id },
+      data: {
+        status: JobStatus.CANCELLED,
+        cancelRequested: true,
+        finishedAt: new Date(),
+        message: "Cancelled before the job started.",
+      },
     });
   }
+
+  await prisma.searchCampaign.update({
+    where: { id: campaignId },
+    data: { status: CampaignStatus.CANCELLED },
+  });
+
   revalidatePath(`/campaigns/${campaignId}`);
   revalidatePath("/jobs");
-  return { ok: true, message: "Cancellation requested." };
+  return {
+    ok: true,
+    message: job ? "Cancelled before the job started." : "Campaign cancelled.",
+  };
 }
 
 export async function deleteCampaign(campaignId: string): Promise<void> {

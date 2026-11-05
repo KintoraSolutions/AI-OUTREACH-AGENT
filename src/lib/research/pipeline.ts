@@ -1,4 +1,5 @@
 import { NonRecoverableError, ProviderNotConfiguredError } from "@/lib/research/errors";
+import { toOperatorMessage } from "@/lib/research/failure-reasons";
 import { runDiscovery } from "@/lib/research/discover";
 import { enrichClinic } from "@/lib/research/enrich";
 import { withRetry } from "@/lib/research/retry";
@@ -15,7 +16,7 @@ import type {
 } from "@/lib/research/types";
 
 /**
- * Campaign research orchestrator (runner-agnostic; plan.md Section 5).
+ * Campaign research orchestrator (runner-agnostic; docs/planning/build-plan.md Section 5).
  *
  * The database (via `ResearchRepository`) is the durable source of truth for
  * status, progress, partial results, and errors. Every unit of work is wrapped
@@ -50,13 +51,18 @@ export interface RunSummary {
   succeeded: number;
   failed: number;
   duplicates: number;
+  /** Reserve clinics researched to make up for ones that failed. */
+  replaced: number;
   message: string | null;
 }
+
+type Candidate = { candidate: DiscoveredClinic; dedupeKey: string };
 
 type DiscoveryStepResult =
   | {
       ok: true;
-      candidates: { candidate: DiscoveredClinic; dedupeKey: string }[];
+      candidates: Candidate[];
+      reserves: Candidate[];
       filtered: number;
       duplicates: number;
     }
@@ -88,7 +94,7 @@ export async function runCampaignResearch(
       finishedAt: new Date(),
       message: "Campaign not found.",
     });
-    return { status: "FAILED", total: 0, succeeded: 0, failed: 0, duplicates: 0, message: "Campaign not found." };
+    return { status: "FAILED", total: 0, succeeded: 0, failed: 0, duplicates: 0, replaced: 0, message: "Campaign not found." };
   }
   const { orgId, criteria } = loaded;
 
@@ -100,7 +106,13 @@ export async function runCampaignResearch(
         retries: retries ?? 2,
         sleep,
       });
-      return { ok: true, candidates: out.candidates, filtered: out.filtered, duplicates: out.duplicates };
+      return {
+        ok: true,
+        candidates: out.candidates,
+        reserves: out.reserves,
+        filtered: out.filtered,
+        duplicates: out.duplicates,
+      };
     } catch (e) {
       const configIssue = e instanceof ProviderNotConfiguredError;
       return {
@@ -112,18 +124,21 @@ export async function runCampaignResearch(
   });
 
   if (!discovery.ok) {
+    // The raw text goes to the error log; the job message, which an operator
+    // reads on the dashboard, gets the readable form.
     await repo.logError(jobId, { scope: "discovery", message: discovery.message, retryable: discovery.retryable });
-    await repo.updateJob(jobId, { status: "FAILED", finishedAt: new Date(), message: discovery.message });
+    const operatorMessage = toOperatorMessage(discovery.message);
+    await repo.updateJob(jobId, { status: "FAILED", finishedAt: new Date(), message: operatorMessage });
     await repo.setCampaignStatus(campaignId, "DRAFT");
-    return { status: "FAILED", total: 0, succeeded: 0, failed: 0, duplicates: 0, message: discovery.message };
+    return { status: "FAILED", total: 0, succeeded: 0, failed: 0, duplicates: 0, replaced: 0, message: operatorMessage };
   }
 
   // Load the org's scoring configuration once, memoized, so every clinic in this
   // run is scored against the same ruleset version (deterministic).
   const config: ScoringConfig = await steps.run("scoring-config", () => repo.loadScoringConfig(orgId));
 
-  const { candidates, filtered, duplicates: discoveryDuplicates } = discovery;
-  const total = candidates.length;
+  const { candidates, reserves, filtered, duplicates: discoveryDuplicates } = discovery;
+  let total = candidates.length;
   await repo.updateJob(jobId, {
     total,
     message:
@@ -135,7 +150,54 @@ export async function runCampaignResearch(
   if (total === 0) {
     await repo.updateJob(jobId, { status: "SUCCEEDED", finishedAt: new Date(), progress: 100 });
     await repo.setCampaignStatus(campaignId, "COMPLETED");
-    return { status: "SUCCEEDED", total: 0, succeeded: 0, failed: 0, duplicates: discoveryDuplicates, message: null };
+    return { status: "SUCCEEDED", total: 0, succeeded: 0, failed: 0, duplicates: discoveryDuplicates, replaced: 0, message: null };
+  }
+
+  /**
+   * Enrich + persist one clinic. Never throws: a failing website is recorded as
+   * a soft error and the discovery record is still saved (partial results); a
+   * hard failure is caught, logged, and isolated so the campaign continues.
+   *
+   * Shared by the main pass and the replacement pass so a replacement is
+   * researched, scored and logged exactly like any other clinic.
+   */
+  async function processOne(
+    candidate: DiscoveredClinic,
+    dedupeKey: string,
+  ): Promise<ClinicStepResult> {
+    try {
+      const result = await enrichClinic(
+        candidate,
+        dedupeKey,
+        { fetcher: providers.fetcher, performance: providers.performance, browser: providers.browser },
+        { retries: retries ?? 1, sleep },
+      );
+
+      // Deterministic scoring from the audit findings (evidence). Persisted with
+      // the clinic in one transaction so a saved lead is always scored.
+      const score = scoreClinic(toScorableFindings(result.findings), config);
+      const saved = await repo.saveClinic(orgId, campaignId, result, score);
+
+      // Record non-fatal problems (e.g. website unreachable) without failing.
+      for (const soft of result.softErrors) {
+        await repo.logError(jobId, {
+          scope: "enrich",
+          targetUrl: soft.targetUrl,
+          message: `${candidate.name}: ${soft.message}`,
+          retryable: soft.retryable,
+        });
+      }
+      return { outcome: saved };
+    } catch (e) {
+      await repo.logError(jobId, {
+        scope: "enrich",
+        targetUrl: candidate.websiteUrl,
+        message: `${candidate.name}: ${e instanceof Error ? e.message : String(e)}`,
+        stack: e instanceof Error ? e.stack : null,
+        retryable: false,
+      });
+      return { outcome: "failed" };
+    }
   }
 
   // --- Per-clinic enrichment ---
@@ -162,47 +224,10 @@ export async function runCampaignResearch(
       break;
     }
 
-    // Enrich + persist one clinic as a single durable, idempotent step. It never
-    // throws: a failing website is recorded as a soft error and the discovery
-    // record is still saved (partial results); a hard failure is caught, logged,
-    // and isolated so the campaign continues. Once this step completes it is
-    // memoized, so a replay does not re-enrich or re-save the clinic.
-    const { outcome } = await steps.run(`clinic-${index}-${dedupeKey}`, async (): Promise<ClinicStepResult> => {
-      try {
-        const result = await enrichClinic(
-          candidate,
-          dedupeKey,
-          { fetcher: providers.fetcher, performance: providers.performance, browser: providers.browser },
-          { retries: retries ?? 1, sleep },
-        );
-
-        // Deterministic scoring from the audit findings (evidence). Persisted with
-        // the clinic in one transaction so a saved lead is always scored.
-        const score = scoreClinic(toScorableFindings(result.findings), config);
-        const saved = await repo.saveClinic(orgId, campaignId, result, score);
-
-        // Record non-fatal problems (e.g. website unreachable) without failing.
-        for (const soft of result.softErrors) {
-          await repo.logError(jobId, {
-            scope: "enrich",
-            targetUrl: soft.targetUrl,
-            message: `${candidate.name}: ${soft.message}`,
-            retryable: soft.retryable,
-          });
-        }
-        return { outcome: saved };
-      } catch (e) {
-        // Hard failure for this clinic only: record and continue the campaign.
-        await repo.logError(jobId, {
-          scope: "enrich",
-          targetUrl: candidate.websiteUrl,
-          message: `${candidate.name}: ${e instanceof Error ? e.message : String(e)}`,
-          stack: e instanceof Error ? e.stack : null,
-          retryable: false,
-        });
-        return { outcome: "failed" };
-      }
-    });
+    const { outcome } = await steps.run(
+      `clinic-${index}-${dedupeKey}`,
+      () => processOne(candidate, dedupeKey),
+    );
 
     if (outcome === "duplicate") duplicates++;
     else if (outcome === "created") succeeded++;
@@ -215,6 +240,52 @@ export async function runCampaignResearch(
       succeeded,
       failed,
       progress: Math.round((processed / total) * 100),
+    });
+  }
+
+  // --- Replace failures from the reserve pool ---
+  //
+  // Discovery over-fetches, so the surplus beyond maxLeads is sitting unused.
+  // A campaign asked for 40 leads should not quietly finish with 36 because
+  // four sites were unreachable: pull reserves in until the original target is
+  // met or the pool runs dry. A replacement that itself fails simply draws the
+  // next one, bounded by the pool size.
+  let replaced = 0;
+  const target = candidates.length;
+
+  for (let r = 0; r < reserves.length && succeeded < target && !stopStatus; r++) {
+    const control = await steps.run(`replace-control-${r}`, () => repo.readControl(jobId));
+    if (control.cancelRequested) {
+      stopStatus = "CANCELLED";
+      break;
+    }
+    if (control.pauseRequested) {
+      stopStatus = "PAUSED";
+      break;
+    }
+
+    const { candidate, dedupeKey } = reserves[r]!;
+    const { outcome } = await steps.run(
+      `replacement-${r}-${dedupeKey}`,
+      () => processOne(candidate, dedupeKey),
+    );
+
+    // The replacement is extra work, so the denominator grows with it; progress
+    // would otherwise exceed 100%.
+    total++;
+    processed++;
+    replaced++;
+    if (outcome === "duplicate") duplicates++;
+    else if (outcome === "created") succeeded++;
+    else failed++;
+
+    await repo.updateJob(jobId, {
+      total,
+      processed,
+      succeeded,
+      failed,
+      progress: Math.round((processed / total) * 100),
+      message: `Replacing ${Math.min(target - succeeded + replaced, reserves.length)} clinic(s) that could not be researched.`,
     });
   }
 
@@ -235,7 +306,14 @@ export async function runCampaignResearch(
       ? `Paused after ${processed} of ${total}. Resume to continue.`
       : status === "CANCELLED"
         ? `Cancelled after ${processed} of ${total}.`
-        : `Researched ${succeeded} clinic(s), ${failed} failed, ${duplicates} duplicate(s) skipped.`;
+        : [
+            `Researched ${succeeded} clinic(s)`,
+            failed > 0 ? `${failed} could not be researched` : null,
+            replaced > 0 ? `${replaced} replaced from reserves` : null,
+            duplicates > 0 ? `${duplicates} duplicate(s) skipped` : null,
+          ]
+            .filter(Boolean)
+            .join(", ") + ".";
 
   await repo.updateJob(jobId, {
     status,
@@ -258,5 +336,5 @@ export async function runCampaignResearch(
           : "COMPLETED",
   );
 
-  return { status, total, succeeded, failed, duplicates, message };
+  return { status, total, succeeded, failed, duplicates, replaced, message };
 }

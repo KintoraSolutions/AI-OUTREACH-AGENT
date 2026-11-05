@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/db";
+import { classifyFailure, toOperatorMessage } from "@/lib/research/failure-reasons";
 import { JobStatus } from "@prisma/client";
 import { env, isProviderConfigured } from "@/lib/env";
 import { getProviderBundle } from "@/lib/research/providers";
@@ -10,7 +11,7 @@ import {
 } from "@/inngest/client";
 
 /**
- * Job runner abstraction (plan.md Section 5, decision 3). Callers depend only on
+ * Job runner abstraction (docs/planning/build-plan.md Section 5, decision 3). Callers depend only on
  * this interface, so the execution backend can change without touching the
  * research engine or the dashboard — the database is the source of truth for
  * status, progress, and results.
@@ -55,22 +56,28 @@ export class InlineJobRunner implements JobRunner {
     void runCampaignResearch(campaignId, jobId, repo, providers).catch(async (error) => {
       // Unexpected top-level failure: preserve any partial results already saved
       // and move the job out of RUNNING so the dashboard reflects reality.
+      const raw = error instanceof Error ? error.message : String(error);
+      // The job's `message` is read by an operator on the dashboard, so it gets
+      // the plain-language reason. The raw text is still written to the error
+      // log below, where a developer can find it.
+      const reason = classifyFailure(raw);
+
       try {
         await prisma.researchJob.update({
           where: { id: jobId },
           data: {
             status: JobStatus.FAILED,
             finishedAt: new Date(),
-            message: error instanceof Error ? error.message.slice(0, 500) : "Unexpected error.",
+            message: `Research stopped: ${toOperatorMessage(raw)}`,
           },
         });
         await prisma.errorLog.create({
           data: {
             jobId,
             scope: "runner",
-            message: error instanceof Error ? error.message : String(error),
+            message: raw.slice(0, 2000),
             stack: error instanceof Error ? (error.stack ?? null) : null,
-            retryable: false,
+            retryable: reason.worthRetrying,
           },
         });
       } catch {

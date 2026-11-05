@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { JobStatus, Role } from "@prisma/client";
-import { ExternalLink } from "lucide-react";
+import { ArrowRight, ExternalLink } from "lucide-react";
 import { prisma } from "@/lib/db";
 import { requireOrgContext, roleAtLeast } from "@/lib/auth/rbac";
 import { env, isProviderConfigured } from "@/lib/env";
@@ -14,12 +14,13 @@ import { PageHeader } from "@/components/app/page-header";
 import { ConfigWarning } from "@/components/app/config-warning";
 import { CampaignControls } from "@/components/app/campaign-controls";
 import { RescoreCampaignButton } from "@/components/app/rescore-campaign-button";
-import { BulkDraftButton } from "@/components/app/bulk-draft-button";
 import { AutoRefresh } from "@/components/app/auto-refresh";
 import { JobList, type JobRow } from "@/components/app/job-list";
 import { EmptyState } from "@/components/app/empty-state";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { buildReadiness, type ReadinessClinic } from "@/lib/campaigns/readiness";
 
 export const dynamic = "force-dynamic";
 
@@ -45,7 +46,11 @@ export default async function CampaignDetailPage({
     include: {
       jobs: {
         orderBy: { createdAt: "desc" },
-        include: { errors: { orderBy: { createdAt: "desc" }, take: 50 } },
+        take: 20,
+        include: {
+          errors: { orderBy: { createdAt: "desc" }, take: 5 },
+          _count: { select: { errors: true } },
+        },
       },
       clinics: {
         orderBy: { collectedAt: "desc" },
@@ -57,6 +62,52 @@ export default async function CampaignDetailPage({
   });
 
   if (!campaign) notFound();
+
+  // Readiness is computed over every lead in the campaign, not just the 50
+  // listed below, so the headline count is the real one.
+  const readinessRows = await prisma.clinic.findMany({
+    where: { campaignId: campaign.id, orgId: ctx.orgId },
+    select: {
+      id: true,
+      name: true,
+      category: true,
+      websiteUrl: true,
+      publicEmail: true,
+      doNotContact: true,
+      contacts: { select: { email: true }, orderBy: { isDecisionMaker: "desc" } },
+      scores: {
+        take: 1,
+        orderBy: { computedAt: "desc" },
+        select: {
+          recommendedService: true,
+          manualOverride: true,
+          overrideOverall: true,
+          overrideService: true,
+          overallScore: true,
+          confidence: true,
+        },
+      },
+      drafts: { select: { status: true } },
+    },
+  });
+  const readiness = buildReadiness(
+    readinessRows.map(
+      (c): ReadinessClinic => ({
+        id: c.id,
+        name: c.name,
+        category: c.category,
+        websiteUrl: c.websiteUrl,
+        publicEmail: c.publicEmail,
+        doNotContact: c.doNotContact,
+        contactEmails: c.contacts.map((x) => x.email),
+        score: c.scores[0] ?? null,
+        draft: c.drafts[0] ?? null,
+      }),
+    ),
+  );
+  const openIssues = readiness.groups
+    .filter((g) => g.severity !== "info")
+    .reduce((n, g) => n + g.count, 0);
 
   const discoveryConfigured = isProviderConfigured("discovery");
   const canManage = roleAtLeast(ctx.role, Role.ADMIN);
@@ -79,6 +130,7 @@ export default async function CampaignDetailPage({
     finishedAt: j.finishedAt,
     createdAt: j.createdAt,
     campaignId: j.campaignId,
+    errorCount: j._count.errors,
     errors: j.errors,
   }));
 
@@ -101,25 +153,52 @@ export default async function CampaignDetailPage({
           used, so no warning is needed. */}
       {env.NODE_ENV === "production" ? <ConfigWarning providerKey="background_jobs" /> : null}
 
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="flex flex-wrap items-center gap-2">
-          <CampaignControls
-            campaignId={campaign.id}
-            status={campaign.status}
-            discoveryConfigured={discoveryConfigured}
-            canManage={canManage}
-          />
-          {canManage && campaign._count.clinics > 0 ? (
-            <>
+      {/* The campaign's own controls stay here; the path to actually sending
+          work out now runs through the review screen, which is the only place
+          that can say what the run will cost and what it will skip. */}
+      <Card elevation="raised">
+        <CardContent className="space-y-4 pt-6">
+          <div className="flex flex-wrap items-start justify-between gap-4">
+            <div className="min-w-0">
+              <h2 className="font-display text-subtitle2 font-semibold">
+                {campaign._count.clinics === 0
+                  ? "No leads yet"
+                  : readiness.draftableLeads > 0
+                    ? `${readiness.draftableLeads} of ${readiness.totalLeads} leads ready to draft`
+                    : `${readiness.totalLeads} leads found, none scored yet`}
+              </h2>
+              <p className="mt-1 text-body1 text-[var(--fl-fg-3)]">
+                {campaign._count.clinics === 0
+                  ? "Run research to discover clinics matching the criteria below."
+                  : openIssues > 0
+                    ? `${openIssues} lead${openIssues === 1 ? "" : "s"} need${openIssues === 1 ? "s" : ""} attention before launching. You can fix them all on the review screen.`
+                    : "Everything checks out. Review the cost and launch when you are ready."}
+              </p>
+            </div>
+
+            {campaign._count.clinics > 0 ? (
+              <Button asChild size="lg" className="shrink-0">
+                <Link href={`/campaigns/${campaign.id}/review`}>
+                  Review and launch
+                  <ArrowRight aria-hidden="true" />
+                </Link>
+              </Button>
+            ) : null}
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2 border-t border-[var(--fl-stroke-2)] pt-4">
+            <CampaignControls
+              campaignId={campaign.id}
+              status={campaign.status}
+              discoveryConfigured={discoveryConfigured}
+              canManage={canManage}
+            />
+            {canManage && campaign._count.clinics > 0 ? (
               <RescoreCampaignButton campaignId={campaign.id} />
-              <BulkDraftButton campaignId={campaign.id} disabled={!isProviderConfigured("ai")} />
-            </>
-          ) : null}
-        </div>
-        <Link href="/campaigns" className="text-sm text-muted-foreground hover:underline">
-          ← All campaigns
-        </Link>
-      </div>
+            ) : null}
+          </div>
+        </CardContent>
+      </Card>
 
       <Card>
         <CardHeader>

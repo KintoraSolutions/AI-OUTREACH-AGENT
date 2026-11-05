@@ -2,7 +2,7 @@ import { createCipheriv, createDecipheriv, randomBytes, timingSafeEqual } from "
 import { TokenEncryptionNotConfiguredError } from "@/lib/integrations/errors";
 
 /**
- * Authenticated encryption for OAuth tokens at rest (plan.md S9, S11).
+ * Authenticated encryption for OAuth tokens at rest (docs/planning/build-plan.md S9, S11).
  *
  * AES-256-GCM with a random 96-bit IV per message and the GCM auth tag, so any
  * tampering with stored ciphertext is detected on decrypt. The key comes from

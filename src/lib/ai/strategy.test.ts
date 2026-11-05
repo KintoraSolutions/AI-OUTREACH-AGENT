@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { Confidence, FindingCategory, RecommendedService, ScoreConfidence } from "@prisma/client";
 import { selectStrategy } from "@/lib/ai/strategy";
+import { getUseCase } from "@/lib/ai/use-cases";
 import type { DraftScoreSummary, EvidenceItem } from "@/lib/ai/draft-types";
 
 function ev(code: string, category: FindingCategory, isFact = false): EvidenceItem {
@@ -28,6 +29,50 @@ function score(partial: Partial<DraftScoreSummary>): DraftScoreSummary {
     ...partial,
   };
 }
+
+describe("selectStrategy — relationship outreach (referral use case)", () => {
+  const referral = getUseCase("patient_referral").evidencePolicy;
+
+  it("grounds an introduction in verified context rather than opportunity findings", () => {
+    const sel = selectStrategy(
+      score({ effectiveService: RecommendedService.NONE }),
+      [ev("fit_is_healthcare", FindingCategory.BUSINESS_FIT, true)],
+      { policy: referral, primarySlot: null },
+    );
+    expect(sel.strategy).not.toBe("INSUFFICIENT");
+    expect(sel.supportingEvidence.map((e) => e.code)).toContain("fit_is_healthcare");
+  });
+
+  it("allows a claim-free introduction instead of blocking when nothing is citable", () => {
+    // The whole point: a referral intro that claims nothing about the recipient
+    // is a legitimate email, not an insufficient-evidence failure.
+    const sel = selectStrategy(score({ effectiveService: RecommendedService.NONE }), [], {
+      policy: referral,
+      primarySlot: null,
+    });
+    expect(sel.strategy).not.toBe("INSUFFICIENT");
+    expect(sel.supportingEvidence).toHaveLength(0);
+    expect(sel.reason).toMatch(/makes no claim about the recipient/i);
+  });
+
+  it("ignores opportunity findings outside the use case's citable categories", () => {
+    const sel = selectStrategy(
+      score({ effectiveService: RecommendedService.NONE }),
+      [ev("sw_multiple_locations", FindingCategory.SOFTWARE, true)],
+      { policy: referral, primarySlot: null },
+    );
+    expect(sel.supportingEvidence).toHaveLength(0);
+  });
+
+  it("still blocks when the policy requires context and none exists", () => {
+    const strict = { ...referral, allowClaimFreeIntro: false };
+    const sel = selectStrategy(score({ effectiveService: RecommendedService.NONE }), [], {
+      policy: strict,
+      primarySlot: null,
+    });
+    expect(sel.strategy).toBe("INSUFFICIENT");
+  });
+});
 
 describe("selectStrategy (Stage A)", () => {
   it("selects the recommended single service when it has citable evidence", () => {

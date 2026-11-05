@@ -3,7 +3,7 @@ import { z } from "zod";
 /**
  * Environment access and the provider registry.
  *
- * Per plan.md Section 2B (decision 6): the app never fabricates results when a
+ * Per docs/planning/build-plan.md Section 2B (decision 6): the app never fabricates results when a
  * provider's credentials are missing. Instead it reports which providers are
  * configured and disables the dependent functionality with a clear message.
  *
@@ -11,16 +11,39 @@ import { z } from "zod";
  * parts that are configured; `providerStatus()` is the source of truth for what
  * is available.
  */
+/**
+ * An optional enum that also accepts an empty string.
+ *
+ * `.optional()` only forgives `undefined`, so a variable that is PRESENT but
+ * blank — exactly what copying `.env.example` produces — fails the parse and,
+ * because this module is imported by middleware, 500s the entire app before any
+ * route runs.
+ */
+const optionalEnum = <const T extends readonly [string, ...string[]]>(values: T) =>
+  z.preprocess(
+    (v) => (typeof v === "string" && v.trim() === "" ? undefined : v),
+    z.enum(values as unknown as [string, ...string[]]).optional(),
+    // The cast above widens the inferred output, so the union is restored here;
+    // callers still get `"inline" | "inngest" | undefined`, not `string`.
+  ) as unknown as z.ZodType<T[number] | undefined>;
+
 const envSchema = z.object({
   DATABASE_URL: z.string().optional(),
   DIRECT_URL: z.string().optional(),
   AUTH_SECRET: z.string().optional(),
   NEXTAUTH_URL: z.string().optional(),
-  NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
+  // Tolerant on purpose. This module is parsed at import time and pulled in
+  // by middleware, so a value Zod rejects takes down every request before a
+  // page can render. `.default` covers an unset variable; `.catch` covers an
+  // unexpected one like "staging" and resolves it to production, so an
+  // unrecognised environment never re-arms a development-only bypass.
+  NODE_ENV: z.enum(["development", "test", "production"]).default("development").catch("production"),
 
   GOOGLE_CLIENT_ID: z.string().optional(),
   GOOGLE_CLIENT_SECRET: z.string().optional(),
   AUTH_DEV_LOGIN: z.string().optional(),
+  /** Comma-separated sign-in allowlist. See `signInAllowList` below. */
+  AUTH_ALLOWED_EMAILS: z.string().optional(),
 
   ANTHROPIC_API_KEY: z.string().optional(),
   AI_MODEL: z.string().optional(),
@@ -39,7 +62,7 @@ const envSchema = z.object({
   INNGEST_SIGNING_KEY: z.string().optional(),
   // Local-only override to force a specific job runner. Ignored in production,
   // where Inngest is required and the inline runner is never used.
-  JOB_RUNNER: z.enum(["inline", "inngest"]).optional(),
+  JOB_RUNNER: optionalEnum(["inline", "inngest"]),
   BLOB_READ_WRITE_TOKEN: z.string().optional(),
   EMAIL_VERIFIER: z.string().optional(),
   EMAIL_VERIFIER_API_KEY: z.string().optional(),
@@ -50,8 +73,57 @@ export const env = envSchema.parse(process.env);
 
 const has = (v: string | undefined) => typeof v === "string" && v.trim().length > 0;
 
+/**
+ * Password-less sign-in as any existing user. Development only.
+ *
+ * Previously gated on `NODE_ENV !== "production"`, which is permissive in the
+ * wrong direction: anything that is not exactly the string "production" — a
+ * blank variable, "prod", a container that never sets it — re-armed a bypass
+ * that hands out the owner's session to anyone who can load /signin. Requiring
+ * "development" explicitly means an unrecognised environment fails closed.
+ */
 export const isDevLoginEnabled =
-  env.NODE_ENV !== "production" && env.AUTH_DEV_LOGIN === "true";
+  env.NODE_ENV === "development" && env.AUTH_DEV_LOGIN === "true";
+
+/**
+ * Environment variables without which production cannot work at all.
+ *
+ * Both are declared optional above so the app can boot half-configured in
+ * development, which means a production deployment missing either one starts
+ * up looking healthy and then fails on every request: Auth.js throws
+ * MissingSecret without AUTH_SECRET, and Prisma throws at module init without
+ * DATABASE_URL. Checking here converts that into one legible failure.
+ */
+/**
+ * Email addresses permitted to sign in, lowercased. Empty means "no explicit
+ * allowlist", which production treats as "existing users only".
+ */
+export const signInAllowList: string[] = (env.AUTH_ALLOWED_EMAILS ?? "")
+  .split(",")
+  .map((e) => e.trim().toLowerCase())
+  .filter(Boolean);
+
+export function productionEnvProblems(): string[] {
+  if (env.NODE_ENV !== "production") return [];
+  const problems: string[] = [];
+  if (!has(env.AUTH_SECRET)) {
+    problems.push("AUTH_SECRET is not set — nobody can sign in. Generate one with `npx auth secret`.");
+  }
+  if (!has(env.DATABASE_URL)) {
+    problems.push("DATABASE_URL is not set — every page will fail when Prisma initialises.");
+  }
+  return problems;
+}
+
+// Fail loudly at boot rather than per-request. Skipped during `next build`,
+// where these are legitimately absent on some hosts and nothing serves traffic.
+if (env.NODE_ENV === "production" && process.env.NEXT_PHASE !== "phase-production-build") {
+  const problems = productionEnvProblems();
+  if (problems.length > 0) {
+    const bullets = problems.map((p) => "  - " + p).join("\n");
+    throw new Error("Cannot start in production:\n" + bullets);
+  }
+}
 
 export type ProviderKey =
   | "auth_google"

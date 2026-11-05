@@ -8,14 +8,25 @@ import type {
 /**
  * Discovery step: fetch candidates from the provider, then apply the campaign's
  * required/excluded keyword filters, minimum-location filter, and in-batch +
- * against-existing duplicate prevention (plan.md Section 6 step 1 and 7).
+ * against-existing duplicate prevention (docs/planning/build-plan.md Section 6 step 1 and 7).
  *
  * Pure and provider-injected: the DiscoveryProvider is passed in, so this is
  * exercised in tests with a fake provider and no network.
  */
 
+export type DiscoveredCandidate = { candidate: DiscoveredClinic; dedupeKey: string };
+
 export interface DiscoverOutcome {
-  candidates: { candidate: DiscoveredClinic; dedupeKey: string }[];
+  candidates: DiscoveredCandidate[];
+  /**
+   * Qualified candidates beyond `maxLeads`, kept rather than discarded.
+   *
+   * Discovery already over-fetches to survive post-filtering, and the surplus
+   * used to be thrown away at the `maxLeads` cut-off. The pipeline now draws on
+   * it to replace clinics that fail research, so a campaign asked for 40 leads
+   * does not quietly finish with 36 because four sites were unreachable.
+   */
+  reserves: DiscoveredCandidate[];
   filtered: number; // excluded by keyword/min-location rules
   duplicates: number; // dropped as duplicates (existing or in-batch)
 }
@@ -40,7 +51,8 @@ export async function runDiscovery(
   const raw = await provider.discover(criteria, fetchLimit);
 
   const seen = new Set(existingKeys);
-  const candidates: { candidate: DiscoveredClinic; dedupeKey: string }[] = [];
+  const candidates: DiscoveredCandidate[] = [];
+  const reserves: DiscoveredCandidate[] = [];
   let filtered = 0;
   let duplicates = 0;
 
@@ -66,9 +78,14 @@ export async function runDiscovery(
       continue;
     }
     seen.add(dedupeKey);
-    candidates.push({ candidate, dedupeKey });
-    if (candidates.length >= criteria.maxLeads) break;
+    if (candidates.length < criteria.maxLeads) {
+      candidates.push({ candidate, dedupeKey });
+    } else {
+      // Past the cut-off: hold the rest back as replacements. Bounded by the
+      // provider's own fetch limit, so this cannot grow without limit.
+      reserves.push({ candidate, dedupeKey });
+    }
   }
 
-  return { candidates, filtered, duplicates };
+  return { candidates, reserves, filtered, duplicates };
 }

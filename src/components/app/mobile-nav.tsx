@@ -7,9 +7,9 @@ import { Button } from "@/components/ui/button";
 import { SidebarNav } from "@/components/app/sidebar-nav";
 
 /**
- * Mobile navigation disclosure. On small screens the sidebar is hidden; this
- * hamburger button toggles a dropdown of the same nav. Closes on route change
- * and on Escape, and is keyboard operable.
+ * Mobile navigation disclosure. Below `md` the rail is hidden; this hamburger
+ * toggles a Fluent flyout of the same nav. Closes on route change, on Escape,
+ * and on click-away, and is keyboard operable.
  */
 export function MobileNav() {
   const [open, setOpen] = useState(false);
@@ -32,14 +32,19 @@ export function MobileNav() {
   return (
     <div className="relative md:hidden">
       <Button
+        type="button"
         variant="ghost"
-        size="icon"
+        size="icon-sm"
         aria-label={open ? "Close navigation menu" : "Open navigation menu"}
         aria-expanded={open}
         aria-controls="mobile-nav-panel"
         onClick={() => setOpen((v) => !v)}
       >
-        {open ? <X className="size-5" /> : <Menu className="size-5" />}
+        {open ? (
+          <X strokeWidth={1.75} aria-hidden="true" />
+        ) : (
+          <Menu strokeWidth={1.75} aria-hidden="true" />
+        )}
       </Button>
       {open ? (
         <>
@@ -47,10 +52,11 @@ export function MobileNav() {
           <div className="fixed inset-0 z-30" aria-hidden="true" onClick={() => setOpen(false)} />
           <div
             id="mobile-nav-panel"
-            className="glass-strong absolute left-0 top-full z-40 mt-2 w-56 rounded-[10px]"
-            onClick={() => setOpen(false)}
+            className="absolute left-0 top-full z-40 mt-1 w-64 rounded-md border border-[var(--fl-stroke-2)] bg-[var(--fl-bg-1)] shadow-16 animate-in fade-in-0 slide-in-from-top-2 duration-150 ease-[var(--ease-decelerate)]"
           >
-            <SidebarNav />
+            <nav aria-label="Primary">
+              <SidebarNav onNavigate={() => setOpen(false)} />
+            </nav>
           </div>
         </>
       ) : null}

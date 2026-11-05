@@ -10,10 +10,12 @@ import {
 } from "@prisma/client";
 import { prisma } from "@/lib/db";
 import { requireOrgContext, roleAtLeast } from "@/lib/auth/rbac";
+import { loadOrgAiProfile, slotShortLabel } from "@/lib/ai/org-ai-profile";
 import { buildEffectiveScoreWhere } from "@/lib/leads/score-filter";
 import { PageHeader } from "@/components/app/page-header";
 import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/app/empty-state";
+import { HelpTip } from "@/components/app/help-tip";
 import { LeadFilters } from "@/components/app/lead-filters";
 import { SavedViews } from "@/components/app/saved-views";
 import { LeadTable, type LeadRow } from "@/components/app/lead-table";
@@ -43,6 +45,23 @@ interface SearchParams {
   range?: string;
   leadSource?: string;
 }
+
+/** Every param that narrows the result set (`sort` is an ordering, not a filter). */
+const FILTER_KEYS: (keyof SearchParams)[] = [
+  "q",
+  "category",
+  "stage",
+  "test",
+  "minScore",
+  "maxScore",
+  "service",
+  "confidence",
+  "finding",
+  "audit",
+  "auditedSince",
+  "range",
+  "leadSource",
+];
 
 /** Map a date-range preset to a `createdAt >=` lower bound (null = all time). */
 function rangeSince(range?: string): Date | null {
@@ -75,6 +94,11 @@ function startOfWeek(d: Date): Date {
   return x;
 }
 
+/**
+ * `audited.*` backs the sortable "Audited" column head. Never-audited leads are
+ * pushed to the end in both directions: a wall of blank cells at the top is not
+ * what anyone means by "sort by audited".
+ */
 function buildOrderBy(sort?: string): Prisma.ClinicOrderByWithRelationInput {
   switch (sort) {
     case "createdAt.asc":
@@ -83,6 +107,10 @@ function buildOrderBy(sort?: string): Prisma.ClinicOrderByWithRelationInput {
       return { name: "asc" };
     case "name.desc":
       return { name: "desc" };
+    case "audited.asc":
+      return { lastAuditedAt: { sort: "asc", nulls: "last" } };
+    case "audited.desc":
+      return { lastAuditedAt: { sort: "desc", nulls: "last" } };
     case "stage.asc":
       return { stage: "asc" };
     case "createdAt.desc":
@@ -158,29 +186,61 @@ export default async function LeadsPage({
 
   if (and.length > 0) where.AND = and;
 
-  const [total, clinics, savedViews] = await Promise.all([
-    prisma.clinic.count({ where }),
-    prisma.clinic.findMany({
-      where,
-      orderBy: buildOrderBy(sp.sort),
-      skip: (page - 1) * PAGE_SIZE,
-      take: PAGE_SIZE,
-      include: {
-        locations: { take: 1, orderBy: { collectedAt: "asc" } },
-        scores: { take: 1, orderBy: { computedAt: "desc" } },
-        audits: {
-          take: 1,
-          orderBy: { checkedAt: "desc" },
-          select: { _count: { select: { findings: { where: { dismissed: false } } } } },
+  // Pipeline Health KPIs are scoped to the org + test-data toggle only (NOT the
+  // search/score filters), so they reflect overall health, not the current query.
+  // The strip says so in its own header rather than leaving the reader to notice
+  // that it disagrees with the table.
+  const baseWhere: Prisma.ClinicWhereInput = { orgId: ctx.orgId };
+  if (!sp.test) baseWhere.isTestData = false;
+  const WEEKS = 8;
+  const windowStart = startOfWeek(new Date());
+  windowStart.setDate(windowStart.getDate() - 7 * (WEEKS - 1));
+  const strongWhere = buildEffectiveScoreWhere({ minScore: 70 });
+
+  // One parallel batch: the page list/count/views AND the KPI aggregates. Only
+  // the duplicate scan below depends on this batch (it needs the page's names),
+  // so the KPIs no longer wait for a second serial round-trip.
+  const [total, clinics, savedViews, kpiTotal, kpiStrong, kpiContacted, recentCreated, aiProfile] =
+    await Promise.all([
+      prisma.clinic.count({ where }),
+      prisma.clinic.findMany({
+        where,
+        orderBy: buildOrderBy(sp.sort),
+        skip: (page - 1) * PAGE_SIZE,
+        take: PAGE_SIZE,
+        include: {
+          locations: { take: 1, orderBy: { collectedAt: "asc" } },
+          scores: { take: 1, orderBy: { computedAt: "desc" } },
+          audits: {
+            take: 1,
+            orderBy: { checkedAt: "desc" },
+            select: { _count: { select: { findings: { where: { dismissed: false } } } } },
+          },
         },
-      },
-    }),
-    prisma.savedView.findMany({
-      where: { orgId: ctx.orgId, userId: ctx.userId },
-      orderBy: { name: "asc" },
-      select: { id: true, name: true, params: true },
-    }),
-  ]);
+      }),
+      prisma.savedView.findMany({
+        where: { orgId: ctx.orgId, userId: ctx.userId },
+        orderBy: { name: "asc" },
+        select: { id: true, name: true, params: true },
+      }),
+      prisma.clinic.count({ where: baseWhere }),
+      prisma.clinic.count({
+        where: strongWhere ? { ...baseWhere, scores: { some: strongWhere } } : baseWhere,
+      }),
+      prisma.clinic.count({ where: { ...baseWhere, stage: { in: CONTACTED_STAGES } } }),
+      prisma.clinic.findMany({
+        where: { ...baseWhere, createdAt: { gte: windowStart } },
+        select: { createdAt: true },
+      }),
+      loadOrgAiProfile(ctx.orgId),
+    ]);
+
+  // Opportunity-area abbreviations come from the org's own offering names.
+  const areaLabels = {
+    website: slotShortLabel(aiProfile, "WEBSITE"),
+    software: slotShortLabel(aiProfile, "SOFTWARE"),
+    phone: slotShortLabel(aiProfile, "KLEARQ"),
+  };
 
   // Soft duplicate detection, bounded to the current page: group only the page's
   // stored normalized names (indexed by [orgId, normalizedName]) so this is never
@@ -227,29 +287,7 @@ export default async function LeadsPage({
     };
   });
 
-  // ---- Pipeline Health KPIs -------------------------------------------------
-  // Scoped to the org and the test-data toggle only (NOT the search/score
-  // filters), so the strip reflects overall pipeline health, not the query.
-  const baseWhere: Prisma.ClinicWhereInput = { orgId: ctx.orgId };
-  if (!sp.test) baseWhere.isTestData = false;
-
-  const WEEKS = 8;
-  const windowStart = startOfWeek(new Date());
-  windowStart.setDate(windowStart.getDate() - 7 * (WEEKS - 1));
-
-  const strongWhere = buildEffectiveScoreWhere({ minScore: 70 });
-  const [kpiTotal, kpiStrong, kpiContacted, recentCreated] = await Promise.all([
-    prisma.clinic.count({ where: baseWhere }),
-    prisma.clinic.count({
-      where: strongWhere ? { ...baseWhere, scores: { some: strongWhere } } : baseWhere,
-    }),
-    prisma.clinic.count({ where: { ...baseWhere, stage: { in: CONTACTED_STAGES } } }),
-    prisma.clinic.findMany({
-      where: { ...baseWhere, createdAt: { gte: windowStart } },
-      select: { createdAt: true },
-    }),
-  ]);
-
+  // ---- Pipeline Health KPIs (queried in the batch above) --------------------
   // Bucket the last 8 weeks of new leads (bounded query) into a weekly series.
   const weekStarts: number[] = [];
   for (let i = 0; i < WEEKS; i++) {
@@ -282,10 +320,10 @@ export default async function LeadsPage({
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
   const exportParams = new URLSearchParams();
   for (const [k, v] of Object.entries(sp)) if (v && k !== "page") exportParams.set(k, v);
-  const hasAnyLeads = total > 0 || Boolean(sp.q || sp.category || sp.stage);
+  const isFiltered = FILTER_KEYS.some((k) => Boolean(sp[k]));
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-3">
       <PageHeader
         title="Leads"
         description="Clinics in your outreach pipeline."
@@ -294,19 +332,19 @@ export default async function LeadsPage({
             <>
               <Button asChild size="sm">
                 <Link href="/leads/new">
-                  <Plus className="size-4" />
+                  <Plus className="size-4" aria-hidden="true" />
                   New lead
                 </Link>
               </Button>
               <Button asChild variant="outline" size="sm">
                 <Link href={`/api/leads/export?${exportParams.toString()}`}>
-                  <Download className="size-4" />
+                  <Download className="size-4" aria-hidden="true" />
                   Export
                 </Link>
               </Button>
               <Button asChild variant="outline" size="sm">
                 <Link href="/leads/import">
-                  <Upload className="size-4" />
+                  <Upload className="size-4" aria-hidden="true" />
                   Import
                 </Link>
               </Button>
@@ -315,50 +353,58 @@ export default async function LeadsPage({
         }
       />
 
-      <LeadFilters />
-
-      <SavedViews views={savedViews} />
-
       <PipelineHealth data={health} />
 
+      <LeadFilters viewsSlot={<SavedViews views={savedViews} />} />
+
       {rows.length === 0 ? (
-        hasAnyLeads ? (
+        isFiltered ? (
           <EmptyState
             icon={Users}
-            title="No leads match your filters"
-            description="Try clearing the search or filters."
+            title="No leads match these filters"
+            description="Remove a filter chip above, or clear them all, to widen the search."
           />
         ) : (
           <EmptyState
             icon={Users}
             title="No leads yet"
-            description="Create a lead manually or import a CSV to get started."
+            description="Add a clinic by hand or import a CSV. A lead added this way has no findings and no score until a campaign researches it."
             action={
-              canEdit ? (
-                <div className="flex gap-2">
-                  <Button asChild size="sm">
-                    <Link href="/leads/new">New lead</Link>
-                  </Button>
-                  <Button asChild size="sm" variant="outline">
-                    <Link href="/leads/import">Import CSV</Link>
-                  </Button>
-                </div>
-              ) : null
+              <div className="flex flex-wrap items-center justify-center gap-2">
+                {canEdit ? (
+                  <>
+                    <Button asChild size="sm">
+                      <Link href="/leads/new">New lead</Link>
+                    </Button>
+                    <Button asChild size="sm" variant="outline">
+                      <Link href="/leads/import">Import CSV</Link>
+                    </Button>
+                  </>
+                ) : null}
+                <HelpTip slug="adding-leads" label="How to add leads" />
+              </div>
             }
           />
         )
       ) : (
         <>
-          <LeadTable rows={rows} canEdit={canEdit} />
-          <div className="flex items-center justify-between text-sm text-muted-foreground">
-            <span>
-              {total} lead{total === 1 ? "" : "s"} · page {page} of {totalPages}
-            </span>
+          <LeadTable rows={rows} canEdit={canEdit} areaLabels={areaLabels} />
+          <nav
+            aria-label="Lead pages"
+            className="flex flex-wrap items-center justify-between gap-2 pb-1"
+          >
+            <p aria-live="polite" className="text-body1 text-[var(--fl-fg-2)]">
+              <span className="font-semibold tabular-nums text-[var(--fl-fg-1)]">{total}</span>{" "}
+              {total === 1 ? "lead" : "leads"}
+              {isFiltered ? " matching your filters" : ""} · page{" "}
+              <span className="tabular-nums">{page}</span> of{" "}
+              <span className="tabular-nums">{totalPages}</span>
+            </p>
             <div className="flex gap-2">
               <PagerLink disabled={page <= 1} sp={sp} page={page - 1} label="Previous" />
               <PagerLink disabled={page >= totalPages} sp={sp} page={page + 1} label="Next" />
             </div>
-          </div>
+          </nav>
         </>
       )}
     </div>
@@ -393,7 +439,10 @@ function PagerLink({
   params.set("page", String(page));
   return (
     <Button asChild variant="outline" size="sm">
-      <Link href={`/leads?${params.toString()}`}>{label}</Link>
+      <Link href={`/leads?${params.toString()}`}>
+        {label}
+        <span className="sr-only"> page, page {page}</span>
+      </Link>
     </Button>
   );
 }

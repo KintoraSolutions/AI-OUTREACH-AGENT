@@ -1,6 +1,7 @@
 "use client";
 
-import { LogOut } from "lucide-react";
+import Link from "next/link";
+import { HelpCircle, LogOut, Settings } from "lucide-react";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -16,25 +17,52 @@ interface UserMenuProps {
   name: string | null;
   email: string;
   role: string;
+  orgName?: string;
 }
 
-export function UserMenu({ name, email, role }: UserMenuProps) {
+/**
+ * Account menu. The avatar is a brand-tinted coin: the old neutral circle sat
+ * on a white Fluent header and effectively disappeared.
+ */
+export function UserMenu({ name, email, role, orgName }: UserMenuProps) {
   return (
     <DropdownMenu>
-      <DropdownMenuTrigger className="flex size-9 items-center justify-center rounded-full bg-secondary text-xs font-semibold text-secondary-foreground hover:bg-secondary/80">
-        {initials(name, email)}
+      <DropdownMenuTrigger
+        aria-label={`Account menu for ${name ?? email}`}
+        className="flex size-8 cursor-pointer items-center justify-center rounded-full bg-[var(--fl-brand-tint)] text-caption1 font-semibold text-[var(--fl-brand-text)] transition-colors hover:bg-[var(--fl-brand-tint-hover)]"
+      >
+        <span aria-hidden="true">{initials(name, email)}</span>
       </DropdownMenuTrigger>
-      <DropdownMenuContent className="w-56">
+      <DropdownMenuContent className="w-64">
         <DropdownMenuLabel>
-          <div className="flex flex-col">
-            <span className="truncate text-sm font-medium text-foreground">{name ?? email}</span>
-            <span className="truncate text-xs font-normal text-muted-foreground">{email}</span>
-            <span className="mt-1 text-xs font-normal text-muted-foreground">Role: {role}</span>
+          <div className="flex flex-col gap-0.5">
+            <span className="truncate text-body1 font-semibold text-[var(--fl-fg-1)]">
+              {name ?? email}
+            </span>
+            <span className="truncate text-caption1 font-normal text-[var(--fl-fg-3)]">
+              {email}
+            </span>
+            <span className="mt-1 text-caption1 font-normal text-[var(--fl-fg-2)]">
+              {orgName ? `${orgName} · ${role}` : role}
+            </span>
           </div>
         </DropdownMenuLabel>
         <DropdownMenuSeparator />
+        <DropdownMenuItem asChild>
+          <Link href="/settings">
+            <Settings className="size-4" strokeWidth={1.75} aria-hidden="true" />
+            Settings
+          </Link>
+        </DropdownMenuItem>
+        <DropdownMenuItem asChild>
+          <Link href="/help">
+            <HelpCircle className="size-4" strokeWidth={1.75} aria-hidden="true" />
+            Help
+          </Link>
+        </DropdownMenuItem>
+        <DropdownMenuSeparator />
         <DropdownMenuItem onSelect={() => void signOutAction()}>
-          <LogOut className="size-4" />
+          <LogOut className="size-4" strokeWidth={1.75} aria-hidden="true" />
           Sign out
         </DropdownMenuItem>
       </DropdownMenuContent>

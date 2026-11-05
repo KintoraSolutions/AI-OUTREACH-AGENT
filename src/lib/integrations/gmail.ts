@@ -14,6 +14,7 @@ import { buildGmailRaw } from "@/lib/integrations/gmail-mime";
 import {
   emailDomain,
   evaluateGmailGuards,
+  normalizeEmail,
   type GmailGuardReason,
 } from "@/lib/integrations/gmail-guard";
 import type { FetchLike } from "@/lib/integrations/google-oauth";
@@ -80,18 +81,28 @@ export async function createGmailDraftForApproved(
   // A usable Gmail connection: the user's own, else the org default sender.
   const connection = await getUsableConnection(orgId, actor.id, "gmail");
 
+  const alreadyContactedBy = recipientEmail
+    ? await findLeadAlreadyContacted(orgId, draft.clinicId, recipientEmail)
+    : null;
+
   const guard = evaluateGmailGuards({
     status: draft.status,
     recipientEmail,
     doNotContact: draft.clinic.doNotContact,
     suppressed,
     unsubscribed,
+    alreadyContactedBy,
     connected: connection != null,
   });
 
   if (!guard.ok) {
     // Record blocks that are compliance-relevant on the immutable integration log.
-    if (guard.reason === "suppressed" || guard.reason === "do_not_contact" || guard.reason === "unsubscribed") {
+    if (
+      guard.reason === "suppressed" ||
+      guard.reason === "do_not_contact" ||
+      guard.reason === "unsubscribed" ||
+      guard.reason === "already_contacted"
+    ) {
       await logIntegrationActivity({
         orgId,
         userId: actor.id,
@@ -267,4 +278,38 @@ export async function getGmailDraftForEmailDraft(
     createdByName: rec.createdByName,
     createdAt: rec.createdAt.toISOString(),
   };
+}
+
+/**
+ * Another lead in this org whose outreach already sits in Gmail for the same
+ * inbox, or null.
+ *
+ * Scoped to the same email domain so the scan stays selective, then compared on
+ * the normalized form so `info+optometry@x.com` and `info@x.com` are recognised
+ * as one mailbox. Only CREATED records count: a pending or failed attempt did
+ * not reach anyone, and blocking on it would strand the lead permanently.
+ */
+async function findLeadAlreadyContacted(
+  orgId: string,
+  clinicId: string,
+  recipientEmail: string,
+): Promise<string | null> {
+  const normalized = normalizeEmail(recipientEmail);
+  const domain = normalized.slice(normalized.lastIndexOf("@") + 1);
+  if (!domain) return null;
+
+  const candidates = await prisma.gmailDraftRecord.findMany({
+    where: {
+      orgId,
+      status: GmailDraftStatus.CREATED,
+      clinicId: { not: clinicId },
+      recipientEmail: { endsWith: `@${domain}`, mode: "insensitive" },
+    },
+    select: { recipientEmail: true, clinic: { select: { name: true } } },
+    orderBy: { createdAt: "asc" },
+    take: 200,
+  });
+
+  const hit = candidates.find((c) => normalizeEmail(c.recipientEmail) === normalized);
+  return hit?.clinic.name ?? null;
 }

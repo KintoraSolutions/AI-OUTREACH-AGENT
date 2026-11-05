@@ -6,6 +6,7 @@ import { toast } from "sonner";
 import { Mail, Calendar, Link2, ShieldCheck } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Spinner } from "@/components/ui/spinner";
 import {
   disconnectGoogleAction,
   setDefaultSenderAction,
@@ -45,24 +46,31 @@ export function GoogleIntegrations({
 
   if (!configured) {
     return (
-      <p className="text-sm text-muted-foreground">
+      <p className="text-body1 leading-relaxed text-[var(--fl-fg-2)]">
         Gmail and Calendar are unavailable until{" "}
-        <code className="text-xs">GOOGLE_CLIENT_ID</code>,{" "}
-        <code className="text-xs">GOOGLE_CLIENT_SECRET</code>, and{" "}
-        <code className="text-xs">TOKEN_ENCRYPTION_KEY</code> are configured. Drafts can still be
-        copied manually.
+        <code className="font-mono text-caption1">GOOGLE_CLIENT_ID</code>,{" "}
+        <code className="font-mono text-caption1">GOOGLE_CLIENT_SECRET</code>, and{" "}
+        <code className="font-mono text-caption1">TOKEN_ENCRYPTION_KEY</code> are configured. Drafts
+        can still be copied manually.
       </p>
     );
   }
 
   return (
-    <div className="space-y-5">
+    <div className="space-y-5" aria-busy={pending}>
+      {pending ? (
+        <Spinner size="sm" label="Updating Google connection" showLabel />
+      ) : null}
+
       {myConnection && !myConnection.revoked ? (
-        <div className="rounded-md border p-4">
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <div className="space-y-1">
-              <div className="flex items-center gap-2 text-sm font-medium">
-                <ShieldCheck className="h-4 w-4 text-emerald-600" />
+        <div className="rounded-md border border-[var(--fl-stroke-2)] bg-[var(--fl-bg-1)] p-4 shadow-2">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div className="space-y-1.5">
+              <div className="flex flex-wrap items-center gap-2 text-body1 font-semibold text-[var(--fl-fg-1)]">
+                <ShieldCheck
+                  aria-hidden="true"
+                  className="size-4 shrink-0 text-[var(--fl-success-fg)]"
+                />
                 {myConnection.accountEmail ?? "Connected Google account"}
                 {myConnection.isDefaultSender && <Badge tone="success">Default sender</Badge>}
               </div>
@@ -74,36 +82,49 @@ export function GoogleIntegrations({
                     </Badge>
                   ))
                 ) : (
-                  <span className="text-xs text-muted-foreground">No Gmail/Calendar scopes granted.</span>
+                  <span className="text-caption1 text-[var(--fl-fg-3)]">
+                    No Gmail or Calendar scopes granted.
+                  </span>
                 )}
               </div>
-              <p className="text-xs text-muted-foreground">
+              <p className="text-caption1 leading-relaxed text-[var(--fl-fg-3)]">
                 Connected {new Date(myConnection.connectedAt).toLocaleDateString()}. Tokens are
                 encrypted at rest and never shown.
               </p>
             </div>
-            <Button variant="outline" size="sm" onClick={disconnect} disabled={pending}>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={disconnect}
+              disabled={pending}
+              aria-label={`Disconnect ${myConnection.accountEmail ?? "this Google account"}`}
+            >
               Disconnect
             </Button>
           </div>
 
-          <div className="mt-4 flex flex-wrap gap-2">
+          <div className="mt-4 flex flex-wrap gap-2 border-t border-[var(--fl-stroke-2)] pt-4">
             {!myConnection.capabilities.includes("gmail") && (
               <Button asChild size="sm" variant="outline">
                 <Link href="/api/integrations/google/connect?capability=gmail" prefetch={false}>
-                  <Mail className="mr-1.5 h-4 w-4" /> Add Gmail drafts
+                  <Mail aria-hidden="true" /> Add Gmail drafts
                 </Link>
               </Button>
             )}
             {!myConnection.capabilities.includes("calendar") && (
               <Button asChild size="sm" variant="outline">
                 <Link href="/api/integrations/google/connect?capability=calendar" prefetch={false}>
-                  <Calendar className="mr-1.5 h-4 w-4" /> Add Calendar
+                  <Calendar aria-hidden="true" /> Add Calendar
                 </Link>
               </Button>
             )}
             {canManageDefault && !myConnection.isDefaultSender && (
-              <Button size="sm" variant="ghost" onClick={() => makeDefault(myConnection.id)} disabled={pending}>
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={() => makeDefault(myConnection.id)}
+                disabled={pending}
+              >
                 Make org default sender
               </Button>
             )}
@@ -111,25 +132,28 @@ export function GoogleIntegrations({
         </div>
       ) : (
         <div className="space-y-3">
-          <p className="text-sm text-muted-foreground">
+          <p className="text-body1 leading-relaxed text-[var(--fl-fg-2)]">
             Connect your Google account to create Gmail drafts from approved emails and sync
             follow-ups to Calendar. You grant only the scopes you choose; nothing is ever sent
             automatically.
           </p>
           <div className="flex flex-wrap gap-2">
             <Button asChild size="sm">
-              <Link href="/api/integrations/google/connect?capability=gmail,calendar" prefetch={false}>
-                <Link2 className="mr-1.5 h-4 w-4" /> Connect Google
+              <Link
+                href="/api/integrations/google/connect?capability=gmail,calendar"
+                prefetch={false}
+              >
+                <Link2 aria-hidden="true" /> Connect Google
               </Link>
             </Button>
             <Button asChild size="sm" variant="outline">
               <Link href="/api/integrations/google/connect?capability=gmail" prefetch={false}>
-                <Mail className="mr-1.5 h-4 w-4" /> Gmail only
+                <Mail aria-hidden="true" /> Gmail only
               </Link>
             </Button>
             <Button asChild size="sm" variant="outline">
               <Link href="/api/integrations/google/connect?capability=calendar" prefetch={false}>
-                <Calendar className="mr-1.5 h-4 w-4" /> Calendar only
+                <Calendar aria-hidden="true" /> Calendar only
               </Link>
             </Button>
           </div>
@@ -137,37 +161,49 @@ export function GoogleIntegrations({
       )}
 
       {canManageDefault && orgConnections.length > 0 && (
-        <div className="space-y-2">
-          <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+        <section className="space-y-2" aria-labelledby="org-connections-heading">
+          <h3
+            id="org-connections-heading"
+            className="text-caption1 font-semibold text-[var(--fl-fg-3)]"
+          >
             Organization connections
           </h3>
-          <ul className="divide-y rounded-md border text-sm">
+          <ul className="divide-y divide-[var(--fl-stroke-2)] overflow-hidden rounded-md border border-[var(--fl-stroke-2)] bg-[var(--fl-bg-1)]">
             {orgConnections.map((c) => (
-              <li key={c.id} className="flex flex-wrap items-center justify-between gap-2 px-3 py-2">
-                <span className="flex items-center gap-2">
+              <li
+                key={c.id}
+                className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2 px-3 py-2.5"
+              >
+                <span className="flex flex-wrap items-center gap-2 text-body1 text-[var(--fl-fg-1)]">
                   {c.accountEmail ?? "Google account"}
                   {c.isMine && <Badge tone="neutral">You</Badge>}
                   {c.isDefaultSender && <Badge tone="success">Default sender</Badge>}
                   {c.revoked && <Badge tone="danger">Disconnected</Badge>}
                   {c.capabilities.map((cap) => (
-                    <span key={cap} className="text-xs text-muted-foreground">
+                    <span key={cap} className="text-caption1 text-[var(--fl-fg-3)]">
                       {CAP_LABEL[cap] ?? cap}
                     </span>
                   ))}
                 </span>
                 {!c.isDefaultSender && !c.revoked && (
-                  <Button size="sm" variant="ghost" onClick={() => makeDefault(c.id)} disabled={pending}>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    onClick={() => makeDefault(c.id)}
+                    disabled={pending}
+                    aria-label={`Set ${c.accountEmail ?? "this account"} as the default sender`}
+                  >
                     Set as default sender
                   </Button>
                 )}
               </li>
             ))}
           </ul>
-          <p className="text-xs text-muted-foreground">
+          <p className="text-caption1 leading-relaxed text-[var(--fl-fg-3)]">
             The default sender lets teammates without their own connection create Gmail drafts from
             this account.
           </p>
-        </div>
+        </section>
       )}
     </div>
   );

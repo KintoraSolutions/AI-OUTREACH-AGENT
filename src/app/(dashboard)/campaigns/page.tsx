@@ -65,15 +65,15 @@ function KpiCard({
   series: number[];
 }) {
   return (
-    <div className="rounded-[8px] border border-[var(--hairline)] bg-[var(--surface-2)] p-4">
-      <p className="text-[12px] text-muted-foreground">{label}</p>
+    <div className="rounded-md border border-[var(--hairline)] bg-[var(--surface-2)] p-4">
+      <p className="text-caption1 text-muted-foreground">{label}</p>
       <div className="mt-1.5 flex items-end justify-between gap-3">
-        <span className="text-[30px] font-semibold leading-none tabular-nums text-foreground">
+        <span className="text-title2 font-semibold leading-none tabular-nums text-foreground">
           {value}
         </span>
         <Sparkline points={series} width={120} height={40} className="h-10 w-[120px]" />
       </div>
-      <p className="mt-2 text-[12px] text-muted-foreground">{sub}</p>
+      <p className="mt-2 text-caption1 text-muted-foreground">{sub}</p>
     </div>
   );
 }
@@ -81,13 +81,7 @@ function KpiCard({
 export default async function CampaignsPage() {
   const ctx = await requireOrgContext();
 
-  const campaigns = await prisma.searchCampaign.findMany({
-    where: { orgId: ctx.orgId },
-    orderBy: { createdAt: "desc" },
-    include: { _count: { select: { clinics: true, jobs: true } } },
-  });
-
-  // ---- Weekly series for the overview sparklines (bounded, real data) -------
+  // ---- Weekly window for the overview sparklines (bounded, real data) -------
   const WEEKS = 8;
   const windowStart = startOfWeek(new Date());
   windowStart.setDate(windowStart.getDate() - 7 * (WEEKS - 1));
@@ -98,10 +92,20 @@ export default async function CampaignsPage() {
     weekStarts.push(w.getTime());
   }
 
-  const recentLeads = await prisma.clinic.findMany({
-    where: { orgId: ctx.orgId, campaignId: { not: null }, createdAt: { gte: windowStart } },
-    select: { createdAt: true },
-  });
+  // Both queries are independent — run them in parallel (was a serial waterfall).
+  // `take` bounds the card list; orgs don't approach 50 campaigns.
+  const [campaigns, recentLeads] = await Promise.all([
+    prisma.searchCampaign.findMany({
+      where: { orgId: ctx.orgId },
+      orderBy: { createdAt: "desc" },
+      take: 50,
+      include: { _count: { select: { clinics: true, jobs: true } } },
+    }),
+    prisma.clinic.findMany({
+      where: { orgId: ctx.orgId, campaignId: { not: null }, createdAt: { gte: windowStart } },
+      select: { createdAt: true },
+    }),
+  ]);
 
   const leadsSeries = cumulative(bucketWeeks(recentLeads.map((c) => c.createdAt), weekStarts));
   const campaignSeries = cumulative(
@@ -152,8 +156,8 @@ export default async function CampaignsPage() {
       ) : (
         <>
           {/* Campaign Overview */}
-          <section className="glass rounded-[10px] p-4">
-            <h2 className="mb-3 text-[13px] font-semibold tracking-[-0.01em]">Campaign Overview</h2>
+          <section className="glass rounded-lg p-4">
+            <h2 className="mb-3 text-body1 font-semibold tracking-[-0.01em]">Campaign Overview</h2>
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
               <KpiCard
                 label="Active Campaigns"
@@ -191,18 +195,18 @@ export default async function CampaignsPage() {
                 <Link
                   key={c.id}
                   href={`/campaigns/${c.id}`}
-                  className="glass group block rounded-[10px] p-4 transition-colors hover:border-[var(--hairline-strong)] hover:bg-[var(--surface-2)]"
+                  className="glass group block rounded-lg p-4 transition-colors hover:border-[var(--hairline-strong)] hover:bg-[var(--surface-2)]"
                 >
                   <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
                     {/* Left */}
                     <div className="min-w-0 space-y-1.5">
                       <div className="flex flex-wrap items-center gap-2">
-                        <span className="truncate text-[15px] font-medium">{c.name}</span>
+                        <span className="truncate text-body2 font-medium">{c.name}</span>
                         <Badge tone={CAMPAIGN_STATUS_TONES[c.status]}>
                           {CAMPAIGN_STATUS_LABELS[c.status]}
                         </Badge>
                       </div>
-                      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[12px] text-muted-foreground">
+                      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-caption1 text-muted-foreground">
                         <span className="inline-flex items-center gap-1">
                           <MapPin className="size-3.5 shrink-0 text-[var(--faint-foreground)]" />
                           {locationSummary(c)}
@@ -217,17 +221,17 @@ export default async function CampaignsPage() {
                     {/* Right */}
                     <div className="flex shrink-0 items-center gap-5">
                       <div className="text-right">
-                        <div className="text-[26px] font-semibold leading-none tabular-nums">
+                        <div className="text-title3 font-semibold leading-none tabular-nums">
                           {captured}
                         </div>
-                        <div className="mt-1 text-[11px] text-muted-foreground">Leads Captured</div>
+                        <div className="mt-1 text-caption2 text-muted-foreground">Leads Captured</div>
                       </div>
 
                       {isCompleted ? (
                         <ProgressRing pct={pct} label={`${captured}/${target}`} />
                       ) : (
                         <div className="w-[120px]">
-                          <div className="mb-1 text-right text-[11px] tabular-nums text-muted-foreground">
+                          <div className="mb-1 text-right text-caption2 tabular-nums text-muted-foreground">
                             {captured}/{target}
                           </div>
                           <div className="h-1.5 w-full overflow-hidden rounded-full bg-[var(--surface-3)]">
@@ -239,7 +243,7 @@ export default async function CampaignsPage() {
                         </div>
                       )}
 
-                      <div className="inline-flex items-center gap-1.5 text-[12px] text-muted-foreground">
+                      <div className="inline-flex items-center gap-1.5 text-caption1 text-muted-foreground">
                         Runs: {c._count.jobs}
                         <Settings className="size-4 text-[var(--faint-foreground)] transition-colors group-hover:text-foreground" />
                       </div>
@@ -247,7 +251,7 @@ export default async function CampaignsPage() {
                   </div>
 
                   {/* Bottom row: description + date */}
-                  <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-[var(--hairline)] pt-2.5 text-[12px] text-muted-foreground">
+                  <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-[var(--hairline)] pt-2.5 text-caption1 text-muted-foreground">
                     <span className="truncate">{description}</span>
                     <span className="inline-flex shrink-0 items-center gap-1">
                       <CalendarDays className="size-3.5 text-[var(--faint-foreground)]" />

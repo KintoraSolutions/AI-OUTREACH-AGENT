@@ -1,4 +1,5 @@
 import { Confidence, FindingCategory, RecommendedService } from "@prisma/client";
+import { FINDING_CATEGORY_LABELS, SERVICE_LABELS } from "@/lib/leads/constants";
 import type {
   CategoryBreakdown,
   OverallConfidence,
@@ -11,7 +12,7 @@ import type {
 } from "@/lib/scoring/types";
 
 /**
- * Deterministic lead-scoring engine (plan.md Section 6A). Pure: the same findings
+ * Deterministic lead-scoring engine (docs/planning/build-plan.md Section 6A). Pure: the same findings
  * and config always produce the same score. Every point is traceable to a rule
  * and the finding (evidence) that fired it; subtotals are capped per category and
  * the overall score is clamped to 0-100. Weak evidence cannot fire a rule that
@@ -34,21 +35,26 @@ const ALL_CATEGORIES: FindingCategory[] = [
   FindingCategory.BUSINESS_FIT,
 ];
 
-const SERVICE_LABEL: Record<RecommendedService, string> = {
-  WEBSITE: "Website redesign",
-  SOFTWARE: "Custom software",
-  KLEARQ: "KlearQ",
-  COMBINED: "Combined",
-  NONE: "None",
+/**
+ * Labels used in the stored explanation prose. Injected (rather than hardcoded)
+ * so a freshly scored lead is explained using the organization's own names for
+ * its opportunity areas. Defaults keep the engine usable and pure in tests.
+ */
+export interface ScoreLabels {
+  service: Record<RecommendedService, string>;
+  area: Record<string, string>;
+}
+
+const DEFAULT_SCORE_LABELS: ScoreLabels = {
+  service: SERVICE_LABELS,
+  area: FINDING_CATEGORY_LABELS,
 };
 
-const AREA_LABEL: Record<string, string> = {
-  WEBSITE: "Website",
-  SOFTWARE: "Custom software",
-  KLEARQ: "KlearQ",
-};
-
-export function scoreClinic(findings: ScorableFinding[], config: ScoringConfig): ScoreResult {
+export function scoreClinic(
+  findings: ScorableFinding[],
+  config: ScoringConfig,
+  labels: ScoreLabels = DEFAULT_SCORE_LABELS,
+): ScoreResult {
   const ruleById = new Map(config.rules.map((r) => [r.id, r]));
   const byCategory: Record<FindingCategory, ScoreContribution[]> = {
     WEBSITE: [],
@@ -133,7 +139,7 @@ export function scoreClinic(findings: ScorableFinding[], config: ScoringConfig):
     Math.min(100, ALL_CATEGORIES.reduce((s, c) => s + subtotals[c], 0)),
   );
 
-  const recommendation = recommend(subtotals, config, byCategory);
+  const recommendation = recommend(subtotals, config, byCategory, labels);
   const confidence = overallConfidence(byCategory);
 
   const breakdown: ScoreBreakdown = {
@@ -164,6 +170,7 @@ function recommend(
   subtotals: Record<FindingCategory, number>,
   config: ScoringConfig,
   byCategory: Record<FindingCategory, ScoreContribution[]>,
+  labels: ScoreLabels,
 ): RecommendationDetail {
   const areas = [
     { service: RecommendedService.WEBSITE, cat: FindingCategory.WEBSITE, subtotal: subtotals.WEBSITE },
@@ -179,9 +186,9 @@ function recommend(
   const missingInfo: string[] = [];
   for (const a of areas) {
     if (a.subtotal === 0) {
-      missingInfo.push(`No ${AREA_LABEL[a.cat]} opportunity signals were detected.`);
+      missingInfo.push(`No ${labels.area[a.cat]} opportunity signals were detected.`);
     } else if (byCategory[a.cat].every((c) => !c.isFact)) {
-      uncertainties.push(`${AREA_LABEL[a.cat]} opportunity rests only on inferred evidence.`);
+      uncertainties.push(`${labels.area[a.cat]} opportunity rests only on inferred evidence.`);
     }
   }
 
@@ -193,7 +200,7 @@ function recommend(
   if (best.subtotal < floor) {
     return {
       service: RecommendedService.NONE,
-      reason: `Insufficient evidence: the strongest opportunity (${AREA_LABEL[best.cat]}, ${best.subtotal} pts) is below the ${floor}-point threshold.`,
+      reason: `Insufficient evidence: the strongest opportunity (${labels.area[best.cat]}, ${best.subtotal} pts) is below the ${floor}-point threshold.`,
       alternatives,
       uncertainties: uncertainties.length
         ? uncertainties
@@ -208,7 +215,7 @@ function recommend(
   if (combined) {
     return {
       service: RecommendedService.COMBINED,
-      reason: `${AREA_LABEL[best.cat]} (${best.subtotal} pts) and ${AREA_LABEL[second.cat]} (${second.subtotal} pts) both clear the ${floor}-point threshold and are within ${combinedMargin} points, so a combined pitch is warranted.`,
+      reason: `${labels.area[best.cat]} (${best.subtotal} pts) and ${labels.area[second.cat]} (${second.subtotal} pts) both clear the ${floor}-point threshold and are within ${combinedMargin} points, so a combined pitch is warranted.`,
       alternatives: areas.slice(2).filter((a) => a.subtotal > 0).map((a) => ({ service: a.service, subtotal: a.subtotal })),
       uncertainties,
       missingInfo,
@@ -217,8 +224,8 @@ function recommend(
 
   return {
     service: best.service,
-    reason: `${SERVICE_LABEL[best.service]} is the strongest opportunity at ${best.subtotal} points${
-      second.subtotal >= floor ? `, ahead of ${AREA_LABEL[second.cat]} (${second.subtotal})` : ""
+    reason: `${labels.service[best.service]} is the strongest opportunity at ${best.subtotal} points${
+      second.subtotal >= floor ? `, ahead of ${labels.area[second.cat]} (${second.subtotal})` : ""
     }.`,
     alternatives,
     uncertainties,

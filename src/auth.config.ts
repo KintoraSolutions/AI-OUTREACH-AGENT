@@ -24,6 +24,13 @@ export const authConfig = {
   session: { strategy: "jwt" },
   pages: {
     signIn: "/signin",
+    // Auth.js otherwise renders its own built-in /api/auth/error page, so a
+    // refused sign-in left the visitor on a generic Auth.js screen with no
+    // explanation. Pointing the error page back at /signin lets that page read
+    // the `error` code and say what happened. This changes only what a refused
+    // visitor is told — the `signIn` callback in src/auth.ts still decides who
+    // is refused, unchanged.
+    error: "/signin",
   },
   providers,
   callbacks: {

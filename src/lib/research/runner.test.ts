@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { chooseRunner } from "@/lib/research/runner";
 
 /**
- * Runner-selection policy (plan.md Section 5, items 2-4). These assert that the
+ * Runner-selection policy (docs/planning/build-plan.md Section 5, items 2-4). These assert that the
  * inline runner can never be used in production and that a missing Inngest
  * configuration in production produces a clear error rather than a silent
  * fallback.

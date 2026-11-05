@@ -1,3 +1,4 @@
+import type { ExtractedPerson } from "@/lib/people/extract-team";
 import type { Confidence, FindingCategory } from "@prisma/client";
 import type { ScoreResult, ScoringConfig } from "@/lib/scoring/types";
 
@@ -5,7 +6,7 @@ import type { ScoreResult, ScoringConfig } from "@/lib/scoring/types";
  * Shared contracts for the research engine. Everything here is
  * runner-agnostic and provider-agnostic so the pure pipeline steps and their
  * tests never depend on Prisma, Inngest, or a specific search API
- * (plan.md Section 5, decisions 2 and 3).
+ * (docs/planning/build-plan.md Section 5, decisions 2 and 3).
  */
 
 // ---------------------------------------------------------------------------
@@ -191,6 +192,12 @@ export interface ClinicResearchResult {
   audit: PerformanceResult | null;
   findings: ResearchFinding[];
   sources: CollectedSource[];
+  /**
+   * Decision-makers the clinic publishes about itself, from its own site only.
+   * Empty is a normal outcome: many clinics list no team, and the lead then
+   * falls back to the general inbox exactly as before.
+   */
+  people: ExtractedPerson[];
   /** Non-fatal problems encountered while enriching (e.g. site unreachable). */
   softErrors: { targetUrl: string | null; message: string; retryable: boolean }[];
 }
@@ -222,7 +229,7 @@ export interface JobStepRunner {
 /**
  * Persistence boundary for the orchestrator. The Prisma implementation talks to
  * the database; tests supply an in-memory implementation so the whole workflow
- * can be exercised without Postgres (plan.md Section 13, decision 6).
+ * can be exercised without Postgres (docs/planning/build-plan.md Section 13, decision 6).
  */
 export interface ResearchRepository {
   loadCriteria(campaignId: string): Promise<{ orgId: string; criteria: CampaignCriteria } | null>;

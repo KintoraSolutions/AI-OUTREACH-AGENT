@@ -356,8 +356,16 @@ export async function rescoreCampaign(campaignId: string): Promise<FormState> {
   const config = await loadScoringConfig(ctx.orgId);
   const clinics = await prisma.clinic.findMany({ where: { campaignId, orgId: ctx.orgId }, select: { id: true } });
 
-  for (const c of clinics) {
-    await recomputeClinicScore(c.id, config);
+  // Each clinic's recompute is independent (distinct clinicId, no shared
+  // transaction), so process them in bounded-concurrency chunks instead of one
+  // at a time. This cuts wall-clock roughly by the chunk size and removes the
+  // request-timeout risk on large campaigns, while keeping total in-flight
+  // queries within the Prisma connection pool. Results are deterministic —
+  // parallelism only reorders independent writes.
+  const RESCORE_CONCURRENCY = 5;
+  for (let i = 0; i < clinics.length; i += RESCORE_CONCURRENCY) {
+    const chunk = clinics.slice(i, i + RESCORE_CONCURRENCY);
+    await Promise.all(chunk.map((c) => recomputeClinicScore(c.id, config)));
   }
   await logAuditEntry({
     orgId: ctx.orgId,

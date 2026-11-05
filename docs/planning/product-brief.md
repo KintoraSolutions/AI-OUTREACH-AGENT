@@ -560,7 +560,7 @@ Before writing code:
 
 1. Inspect the existing repository.
 2. Summarize the current architecture.
-3. Create a detailed implementation plan in `plan.md`.
+3. Create a detailed implementation plan in `docs/planning/build-plan.md`.
 4. Identify missing environment variables and integrations.
 5. Propose the database schema.
 6. List any assumptions.
@@ -655,7 +655,7 @@ The first production-ready version is complete when a user can:
 
 ## Final Instructions
 
-Start by inspecting the repository and creating `plan.md`.
+Start by inspecting the repository and creating `docs/planning/build-plan.md`.
 
 Do not create placeholder functionality that appears operational but is not connected to real logic.
 

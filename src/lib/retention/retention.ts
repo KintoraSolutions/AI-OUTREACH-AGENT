@@ -9,7 +9,7 @@ import {
 } from "@prisma/client";
 
 /**
- * Data-retention purge (plan.md Section 12).
+ * Data-retention purge (docs/planning/build-plan.md Section 12).
  *
  * A configurable per-org `retentionDays` window (0 = disabled) drives a durable,
  * idempotent purge of STALE, UNENGAGED research data. The design guarantees:

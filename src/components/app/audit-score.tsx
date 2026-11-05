@@ -22,6 +22,7 @@ import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { RecalcButton, ClearOverrideButton, ScoreOverrideForm } from "@/components/app/score-actions";
 import { AddFindingForm, FindingDismissButton } from "@/components/app/finding-controls";
+import { HelpTip } from "@/components/app/help-tip";
 
 const CONFIDENCE_TONES: Record<Confidence, BadgeTone> = {
   VERIFIED: "success",
@@ -84,7 +85,10 @@ export function ScoreCard({
   return (
     <Card>
       <CardHeader className="flex-row items-center justify-between gap-4 space-y-0">
-        <CardTitle>Lead score</CardTitle>
+        <div className="flex items-center gap-1.5">
+          <CardTitle>Lead score</CardTitle>
+          <HelpTip slug="how-scoring-works" />
+        </div>
         <div className="flex flex-wrap items-center gap-2">
           {canEdit ? <RecalcButton clinicId={clinicId} /> : null}
           {canManage ? <ScoreOverrideForm clinicId={clinicId} /> : null}
@@ -95,13 +99,17 @@ export function ScoreCard({
         <div className="flex flex-wrap items-end gap-4">
           <div>
             <div className="flex items-baseline gap-1">
-              <span className="stat text-[44px] font-medium leading-none text-[var(--mint)] [text-shadow:0_0_20px_rgba(61,220,151,0.4)]">
+              {/* The glow here was a hardcoded `rgba(61,220,151,.4)` — the old
+                  mint — so after the Fluent re-skin it rendered a green halo
+                  around a blue number. Fluent gets hierarchy from size and
+                  weight, not from bloom. */}
+              <span className="stat font-display text-title1 font-semibold leading-none text-[var(--fl-brand-text)]">
                 {overall}
               </span>
-              <span className="stat text-sm text-muted-foreground">/ 100</span>
+              <span className="stat text-body1 text-[var(--fl-fg-3)]">/ 100</span>
             </div>
             {view.manualOverride ? (
-              <p className="text-xs text-[var(--amber)]">
+              <p className="text-caption1 text-[var(--fl-warning-fg)]">
                 Overridden{view.overrideOverall !== null ? ` (computed ${view.overallScore})` : ""}
               </p>
             ) : null}
@@ -111,6 +119,10 @@ export function ScoreCard({
             <Badge tone={SCORE_CONFIDENCE_TONES[view.confidence]}>
               {SCORE_CONFIDENCE_LABELS[view.confidence]}
             </Badge>
+            <HelpTip
+              slug="findings-and-confidence"
+              label="Help: what score confidence means"
+            />
             {view.manualOverride ? <Badge tone="warning">Manual override</Badge> : null}
           </div>
         </div>
@@ -123,14 +135,18 @@ export function ScoreCard({
             const pct = cap > 0 ? Math.round((subtotal / cap) * 100) : 0;
             return (
               <div key={cat} className="grid grid-cols-[8rem_1fr_3rem] items-center gap-3">
-                <dt className="text-xs text-muted-foreground">{FINDING_CATEGORY_LABELS[cat]}</dt>
-                <dd className="h-2 overflow-hidden rounded-full bg-[var(--surface-3)]">
+                <dt className="text-caption1 text-[var(--fl-fg-2)]">
+                  {FINDING_CATEGORY_LABELS[cat]}
+                </dt>
+                {/* Track was `--surface-3`, which is now white in the light
+                    theme, so an empty bar was invisible against the card. */}
+                <dd className="h-2 overflow-hidden rounded-full bg-[var(--fl-chart-track)]">
                   <div
-                    className="h-full rounded-full bg-[var(--mint)] shadow-[0_0_8px_rgba(61,220,151,0.4)]"
+                    className="h-full rounded-full bg-[var(--fl-brand)]"
                     style={{ width: `${pct}%` }}
                   />
                 </dd>
-                <dd className="stat text-right text-xs text-foreground">
+                <dd className="stat text-right text-caption1 text-foreground">
                   {subtotal}/{cap}
                 </dd>
               </div>
@@ -234,6 +250,16 @@ export function AuditFindingsList({
 
   return (
     <div className="space-y-4">
+      <div className="flex items-start justify-between gap-2">
+        <p className="text-caption1 text-[var(--fl-fg-3)]">
+          What research observed about this clinic, grouped by how certain each observation is.
+        </p>
+        <HelpTip
+          slug="findings-and-confidence"
+          label="Help: how findings and confidence levels work"
+        />
+      </div>
+
       {canEdit ? <AddFindingForm clinicId={clinicId} /> : null}
 
       <FindingGroup title="Facts" findings={facts} clinicId={clinicId} canEdit={canEdit} />

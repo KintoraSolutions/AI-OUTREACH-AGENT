@@ -1,76 +1,262 @@
 @import "tailwindcss";
+@import "tw-animate-css";
 
 /* ============================================================================
-   CLINICAL TERMINAL
-   A dark operator command-center for lead research + outreach.
-   Warm near-black canvas, a faint console grid, mono numerics, and a single
-   electric-mint signal accent so live data reads as "glowing".
-   This is a COMMITTED dark theme (no OS toggle) - an operations console is
-   always dark. Type: Fira Sans (UI) + Fira Code (all numbers / labels / data).
-   Deliberately NOT: glassmorphism, Apple mimicry, or SaaS blue.
+   FLUENT
+   A Microsoft-style workspace for lead research and outreach.
+   Light-first with a full dark theme, Fluent 2 neutrals, communication blue,
+   real elevation, and the Fluent dual focus ring.
+
+   Type: Segoe UI Variable (Microsoft's own UI face, native on Windows) with
+   Cascadia for numerics. Native beats a webfont here: it is the authentic
+   brand face AND it ships zero font payload.
+
+   HOW THIS FILE IS ORGANIZED
+   1. Fluent primitives      - the raw ramp, per theme (the source of truth)
+   2. Compatibility aliases  - legacy token names mapped onto the ramp
+   3. @theme                 - exposure to Tailwind utilities
+   4. Base + utilities       - body, surfaces, focus, motion
+
+   Section 2 exists so the ~48 existing components re-skin without edits:
+   every `var(--hairline)`, `var(--mint)`, `var(--surface-3)` still resolves,
+   it just resolves to a Fluent value now, and it theme-switches for free.
    ============================================================================ */
 
-/* Single committed dark theme: make every `dark:` utility apply unconditionally. */
-@custom-variant dark (&);
+/* Real class-based dark mode. (This was previously `(&)`, which forced every
+   `dark:` utility on unconditionally to fake a committed dark theme.) */
+@custom-variant dark (&:where(.dark, .dark *));
+
+/* ---------------------------------------------------------------------------
+   1. FLUENT PRIMITIVES — LIGHT
+   --------------------------------------------------------------------------- */
 
 :root {
+  color-scheme: light;
+
+  /* Neutral backgrounds */
+  --fl-bg-1: #ffffff; /* cards, inputs, menus */
+  --fl-bg-1-hover: #f5f5f5;
+  --fl-bg-2: #fafafa;
+  --fl-bg-3: #f5f5f5; /* app canvas */
+  --fl-bg-4: #f0f0f0; /* subtle fills, secondary buttons */
+  --fl-bg-5: #ebebeb;
+  --fl-bg-6: #e6e6e6;
+
+  /* Neutral strokes */
+  --fl-stroke-1: #d1d1d1; /* accessible / control borders */
+  --fl-stroke-2: #e0e0e0; /* dividers, card edges */
+  --fl-stroke-3: #f0f0f0; /* faintest */
+
+  /* Neutral foregrounds */
+  --fl-fg-1: #242424; /* primary text */
+  --fl-fg-2: #424242; /* secondary text */
+  --fl-fg-3: #616161; /* tertiary: table heads, captions */
+  --fl-fg-4: #707070;
+  --fl-fg-disabled: #bdbdbd;
+
+  /* Brand — communication blue.
+     `--fl-brand` is a SOLID FILL (white text sits on it).
+     `--fl-brand-text` is ACCENT TEXT (it sits on the canvas), so the two
+     differ in dark mode where a fill light enough to read as blue would be
+     too light to carry white text. */
+  --fl-brand: #0f6cbd;
+  --fl-brand-hover: #115ea3;
+  --fl-brand-pressed: #0e4775;
+  --fl-brand-text: #0f6cbd;
+  --fl-brand-tint: #ebf3fc; /* selected row / active nav */
+  --fl-brand-tint-hover: #cfe4fa;
+  --fl-brand-tint-stroke: #b4d6fa;
+  --fl-on-brand: #ffffff;
+
+  /* Status triads */
+  --fl-success-fg: #0e700e;
+  --fl-success-bg: #f1faf1;
+  --fl-success-stroke: #9fd89f;
+  --fl-warning-fg: #835b00;
+  --fl-warning-bg: #fff4ce;
+  --fl-warning-stroke: #f2c661;
+  --fl-danger-fg: #b10e1c;
+  --fl-danger-bg: #fdf3f4;
+  --fl-danger-stroke: #f1bbbc;
+  --fl-info-fg: #0f6cbd;
+  --fl-info-bg: #ebf3fc;
+  --fl-info-stroke: #b4d6fa;
+
+  /* Fluent elevation */
+  --fl-shadow-2: 0 1px 2px rgba(0, 0, 0, 0.14), 0 0 2px rgba(0, 0, 0, 0.12);
+  --fl-shadow-4: 0 2px 4px rgba(0, 0, 0, 0.14), 0 0 2px rgba(0, 0, 0, 0.12);
+  --fl-shadow-8: 0 4px 8px rgba(0, 0, 0, 0.14), 0 0 2px rgba(0, 0, 0, 0.12);
+  --fl-shadow-16: 0 8px 16px rgba(0, 0, 0, 0.14), 0 0 2px rgba(0, 0, 0, 0.12);
+  --fl-shadow-28: 0 14px 28px rgba(0, 0, 0, 0.24), 0 0 8px rgba(0, 0, 0, 0.2);
+  --fl-shadow-64: 0 32px 64px rgba(0, 0, 0, 0.24), 0 0 8px rgba(0, 0, 0, 0.2);
+
+  /* Overlays + chrome */
+  --fl-overlay: rgba(0, 0, 0, 0.4);
+  --fl-subtle-hover: rgba(0, 0, 0, 0.04);
+  --fl-subtle-pressed: rgba(0, 0, 0, 0.07);
+  --fl-scrollbar-thumb: #c8c8c8;
+  --fl-scrollbar-thumb-hover: #a6a6a6;
+
+  /* Fluent dual focus ring: a dark outer stroke over a light inner stroke,
+     so the indicator survives ANY background it lands on. */
+  --fl-focus-outer: #000000;
+  --fl-focus-inner: #ffffff;
+
+  /* Categorical data-visualization palette (Office/Fluent hues). Distinct in
+     hue AND in lightness, so series remain separable in grayscale and for
+     color-vision deficiency. */
+  --fl-chart-1: #0f6cbd; /* blue   */
+  --fl-chart-2: #038387; /* teal   */
+  --fl-chart-3: #8764b8; /* purple */
+  --fl-chart-4: #986f0b; /* gold   */
+  --fl-chart-5: #c239b3; /* magenta */
+  --fl-chart-track: #ebebeb; /* unfilled bar / ring track */
+}
+
+/* ---------------------------------------------------------------------------
+   1b. FLUENT PRIMITIVES — DARK
+   --------------------------------------------------------------------------- */
+
+.dark {
   color-scheme: dark;
-  --radius: 7px;
 
-  /* Flat charcoal canvas (no grid pattern) */
-  --canvas: #111211;
-  --canvas-deep: #191a19; /* sidebar chrome */
+  --fl-bg-1: #292929;
+  --fl-bg-1-hover: #3d3d3d;
+  --fl-bg-2: #242424;
+  --fl-bg-3: #1f1f1f;
+  --fl-bg-4: #383838;
+  --fl-bg-5: #0a0a0a;
+  --fl-bg-6: #434343;
 
-  /* Elevated surfaces - SOLID, flat, no blur */
-  --surface: #242524; /* cards, panels */
-  --surface-2: #2a2b29; /* raised: popovers, dialogs */
-  --surface-3: #2f302e; /* controls, inputs, hovers, avatar */
-  --hairline: #3a3b39; /* subtle borders / dividers */
-  --hairline-strong: #45463f; /* stronger separations */
-  --elev-1: 0 1px 2px rgba(0, 0, 0, 0.25);
-  --elev-2: 0 12px 34px rgba(0, 0, 0, 0.55);
+  --fl-stroke-1: #666666;
+  --fl-stroke-2: #525252;
+  --fl-stroke-3: #3d3d3d;
 
-  /* Muted mint accent (no neon) + reserved signals */
-  --mint: #6fd09a; /* primary / interactive / positive */
-  --mint-bright: #8bdcae;
-  --mint-dim: rgba(111, 208, 154, 0.14);
-  --mint-glow: rgba(111, 208, 154, 0.26);
-  --amber: #e0b25c; /* warning / attention */
-  --amber-bright: #edc57e;
-  --amber-dim: rgba(224, 178, 92, 0.14);
-  --red: #e0736f; /* danger / errors */
-  --red-bright: #ec938f;
-  --red-dim: rgba(224, 115, 111, 0.14);
-  --cyan: #6fb9cf; /* info / secondary data */
-  --cyan-bright: #93cfe0;
-  --cyan-dim: rgba(111, 185, 207, 0.14);
+  --fl-fg-1: #ffffff;
+  --fl-fg-2: #d6d6d6;
+  --fl-fg-3: #adadad;
+  --fl-fg-4: #949494;
+  --fl-fg-disabled: #5c5c5c;
+
+  /* Fill stays dark enough to carry white text; accent text goes lighter so
+     it clears 4.5:1 against the dark canvas. */
+  --fl-brand: #115ea3;
+  --fl-brand-hover: #0f6cbd;
+  --fl-brand-pressed: #0c3b5e;
+  --fl-brand-text: #479ef5;
+  --fl-brand-tint: #082338;
+  --fl-brand-tint-hover: #0a2e4a;
+  --fl-brand-tint-stroke: #0f548c;
+  --fl-on-brand: #ffffff;
+
+  --fl-success-fg: #54b054;
+  --fl-success-bg: #052505;
+  --fl-success-stroke: #0e700e;
+  --fl-warning-fg: #f2c661;
+  --fl-warning-bg: #332a00;
+  --fl-warning-stroke: #835b00;
+  --fl-danger-fg: #f1707b;
+  --fl-danger-bg: #3b1113;
+  --fl-danger-stroke: #8b2b30;
+  --fl-info-fg: #479ef5;
+  --fl-info-bg: #0a2e4a;
+  --fl-info-stroke: #115ea3;
+
+  /* Dark surfaces need deeper shadows to read as elevated at all. */
+  --fl-shadow-2: 0 1px 2px rgba(0, 0, 0, 0.5), 0 0 2px rgba(0, 0, 0, 0.4);
+  --fl-shadow-4: 0 2px 4px rgba(0, 0, 0, 0.5), 0 0 2px rgba(0, 0, 0, 0.4);
+  --fl-shadow-8: 0 4px 8px rgba(0, 0, 0, 0.5), 0 0 2px rgba(0, 0, 0, 0.4);
+  --fl-shadow-16: 0 8px 16px rgba(0, 0, 0, 0.5), 0 0 2px rgba(0, 0, 0, 0.4);
+  --fl-shadow-28: 0 14px 28px rgba(0, 0, 0, 0.6), 0 0 8px rgba(0, 0, 0, 0.5);
+  --fl-shadow-64: 0 32px 64px rgba(0, 0, 0, 0.6), 0 0 8px rgba(0, 0, 0, 0.5);
+
+  --fl-overlay: rgba(0, 0, 0, 0.6);
+  --fl-subtle-hover: rgba(255, 255, 255, 0.06);
+  --fl-subtle-pressed: rgba(255, 255, 255, 0.1);
+  --fl-scrollbar-thumb: #4d4d4d;
+  --fl-scrollbar-thumb-hover: #6b6b6b;
+
+  --fl-focus-outer: #ffffff;
+  --fl-focus-inner: #000000;
+
+  /* Lightened so each hue clears the dark canvas. */
+  --fl-chart-1: #479ef5;
+  --fl-chart-2: #4bb4b7;
+  --fl-chart-3: #b4a0e3;
+  --fl-chart-4: #dfae54;
+  --fl-chart-5: #e76bd4;
+  --fl-chart-track: #3d3d3d;
+}
+
+/* ---------------------------------------------------------------------------
+   2. COMPATIBILITY ALIASES
+   Legacy token names, re-pointed at the Fluent ramp. Existing components keep
+   working verbatim and gain theme switching for free.
+   --------------------------------------------------------------------------- */
+
+:root,
+.dark {
+  --radius: 4px;
+
+  /* Canvas + surfaces */
+  --canvas: var(--fl-bg-3);
+  --canvas-deep: var(--fl-bg-1); /* nav chrome is white in light, raised in dark */
+  --surface: var(--fl-bg-1); /* cards */
+  --surface-2: var(--fl-bg-1); /* popovers, dialogs (separated by shadow) */
+  --surface-3: var(--fl-bg-1); /* inputs, outline buttons */
+  --hairline: var(--fl-stroke-2);
+  --hairline-strong: var(--fl-stroke-1);
+  --elev-1: var(--fl-shadow-2);
+  --elev-2: var(--fl-shadow-16);
 
   /* Text */
-  --foreground: #eaebe8; /* warm off-white */
-  --muted-foreground: #9fa19b; /* muted gray */
-  --faint-foreground: #7d7e77;
+  --foreground: var(--fl-fg-1);
+  --muted-foreground: var(--fl-fg-2);
+  --faint-foreground: var(--fl-fg-3);
 
-  /* Semantic tokens (consumed by Tailwind via @theme below) */
+  /* Accent aliases. The old palette's mint/amber/red/cyan slots now carry
+     brand/warning/danger/info, so every badge, alert and chart keeps its
+     semantic meaning while changing its color. */
+  --mint: var(--fl-brand-text);
+  --mint-bright: var(--fl-brand-text);
+  --mint-dim: var(--fl-brand-tint);
+  --mint-glow: var(--fl-brand-tint-hover);
+  --amber: var(--fl-warning-fg);
+  --amber-bright: var(--fl-warning-fg);
+  --amber-dim: var(--fl-warning-bg);
+  --red: var(--fl-danger-fg);
+  --red-bright: var(--fl-danger-fg);
+  --red-dim: var(--fl-danger-bg);
+  --cyan: var(--fl-info-fg);
+  --cyan-bright: var(--fl-info-fg);
+  --cyan-dim: var(--fl-info-bg);
+
+  /* Semantic tokens */
   --background: var(--canvas);
   --card: var(--surface);
   --card-foreground: var(--foreground);
   --popover: var(--surface-2);
   --popover-foreground: var(--foreground);
-  --primary: var(--mint);
-  --primary-foreground: #08221a; /* dark ink on mint */
-  --secondary: var(--surface-3);
+  --primary: var(--fl-brand);
+  --primary-foreground: var(--fl-on-brand);
+  --secondary: var(--fl-bg-4);
   --secondary-foreground: var(--foreground);
-  --muted: rgba(255, 255, 255, 0.045);
-  --accent: var(--mint-dim);
-  --accent-foreground: var(--mint);
-  --destructive: var(--red);
-  --destructive-foreground: #2a0606;
-  --success: var(--mint);
-  --warning: var(--amber);
+  --muted: var(--fl-subtle-hover);
+  --accent: var(--fl-brand-tint);
+  --accent-foreground: var(--fl-brand-text);
+  --destructive: var(--fl-danger-fg);
+  --destructive-foreground: #ffffff;
+  --success: var(--fl-success-fg);
+  --warning: var(--fl-warning-fg);
+  --info: var(--fl-info-fg);
   --border: var(--hairline);
   --input: var(--hairline-strong);
-  --ring: var(--mint);
+  --ring: var(--fl-brand-text);
 }
+
+/* ---------------------------------------------------------------------------
+   3. TAILWIND THEME
+   --------------------------------------------------------------------------- */
 
 @theme inline {
   --color-background: var(--background);
@@ -91,6 +277,7 @@
   --color-destructive-foreground: var(--destructive-foreground);
   --color-success: var(--success);
   --color-warning: var(--warning);
+  --color-info: var(--info);
   --color-border: var(--border);
   --color-input: var(--input);
   --color-ring: var(--ring);
@@ -99,18 +286,82 @@
   --color-amber: var(--amber);
   --color-cyan: var(--cyan);
 
-  --radius-sm: 6px;
-  --radius-md: 8px;
-  --radius-lg: 10px;
-  --radius-xl: 14px;
+  /* Brand + neutral ramp, addressable directly (bg-brand, text-fg-3, ...) */
+  --color-brand: var(--fl-brand);
+  --color-brand-hover: var(--fl-brand-hover);
+  --color-brand-text: var(--fl-brand-text);
+  --color-brand-tint: var(--fl-brand-tint);
+  --color-on-brand: var(--fl-on-brand);
+  --color-fg-1: var(--fl-fg-1);
+  --color-fg-2: var(--fl-fg-2);
+  --color-fg-3: var(--fl-fg-3);
+  --color-fg-4: var(--fl-fg-4);
+  --color-bg-1: var(--fl-bg-1);
+  --color-bg-2: var(--fl-bg-2);
+  --color-bg-3: var(--fl-bg-3);
+  --color-bg-4: var(--fl-bg-4);
+  --color-stroke-1: var(--fl-stroke-1);
+  --color-stroke-2: var(--fl-stroke-2);
+
+  /* Fluent corner radii */
+  --radius-none: 0px;
+  --radius-sm: 2px;
+  --radius-md: 4px;
+  --radius-lg: 6px;
+  --radius-xl: 8px;
+  --radius-2xl: 12px;
+
+  /* Fluent elevation, as real shadow utilities (shadow-4, shadow-16, ...) */
+  --shadow-2: var(--fl-shadow-2);
+  --shadow-4: var(--fl-shadow-4);
+  --shadow-8: var(--fl-shadow-8);
+  --shadow-16: var(--fl-shadow-16);
+  --shadow-28: var(--fl-shadow-28);
+  --shadow-64: var(--fl-shadow-64);
+
+  /* Fluent type ramp. The old theme had no type scale at all, which is why
+     ~90% of sizing was hardcoded arbitrary values. */
+  --text-caption2: 0.625rem; /* 10 / 14 */
+  --text-caption2--line-height: 0.875rem;
+  --text-caption1: 0.75rem; /* 12 / 16 */
+  --text-caption1--line-height: 1rem;
+  --text-body1: 0.875rem; /* 14 / 20 — default UI text */
+  --text-body1--line-height: 1.25rem;
+  --text-body2: 1rem; /* 16 / 22 */
+  --text-body2--line-height: 1.375rem;
+  --text-subtitle2: 1rem; /* 16 / 22 semibold */
+  --text-subtitle2--line-height: 1.375rem;
+  --text-subtitle1: 1.25rem; /* 20 / 26 */
+  --text-subtitle1--line-height: 1.625rem;
+  --text-title3: 1.5rem; /* 24 / 32 */
+  --text-title3--line-height: 2rem;
+  --text-title2: 1.75rem; /* 28 / 36 */
+  --text-title2--line-height: 2.25rem;
+  --text-title1: 2rem; /* 32 / 40 */
+  --text-title1--line-height: 2.5rem;
+  --text-large-title: 2.5rem; /* 40 / 52 */
+  --text-large-title--line-height: 3.25rem;
+
+  /* Fluent motion curves + durations */
+  --ease-easy: cubic-bezier(0.33, 0, 0.67, 1);
+  --ease-decelerate: cubic-bezier(0.1, 0.9, 0.2, 1);
+  --ease-accelerate: cubic-bezier(0.9, 0.1, 1, 0.2);
 
   --font-sans:
-    var(--font-fira-sans), ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
-  --font-mono: var(--font-fira-code), ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    "Segoe UI Variable Text", "Segoe UI Variable", "Segoe UI", -apple-system,
+    BlinkMacSystemFont, system-ui, "Helvetica Neue", Arial, sans-serif;
+  --font-display:
+    "Segoe UI Variable Display", "Segoe UI Variable", "Segoe UI", -apple-system,
+    BlinkMacSystemFont, system-ui, sans-serif;
+  --font-mono:
+    "Cascadia Mono", "Cascadia Code", Consolas, ui-monospace, "SF Mono", Menlo,
+    monospace;
 }
 
-/* Default border color — in @layer base so explicit border-color utilities
-   (e.g. colored badges/alerts) still win over this fallback. */
+/* ---------------------------------------------------------------------------
+   4. BASE
+   --------------------------------------------------------------------------- */
+
 @layer base {
   * {
     border-color: var(--color-border);
@@ -125,96 +376,213 @@ html {
 
 body {
   min-height: 100vh;
-  background-color: var(--canvas); /* flat charcoal, no pattern */
+  background-color: var(--canvas);
   color: var(--color-foreground);
   font-family: var(--font-sans);
-  font-feature-settings: "cv02", "ss01";
-  letter-spacing: -0.006em;
+  font-size: 0.875rem;
+  line-height: 1.25rem;
 }
 
-/* ---- Surface utilities (solid panels; names kept for drop-in re-skin) ------ */
+/* Segoe UI Variable Display is optically sized for large text; use it on
+   headings so titles get the tighter, more confident Microsoft cut. */
+h1,
+h2,
+h3 {
+  font-family: var(--font-display);
+}
+
+/* ---- Surfaces -------------------------------------------------------------
+   Class names kept from the previous theme (they are used in ~40 places) but
+   re-skinned onto Fluent. Nothing here was ever actually translucent.
+   --------------------------------------------------------------------------- */
 
 .glass {
   background: var(--surface);
   border: 1px solid var(--hairline);
-  box-shadow: var(--elev-1);
+  box-shadow: var(--fl-shadow-2);
 }
 
 .glass-strong {
   background: var(--surface-2);
-  border: 1px solid var(--hairline-strong);
-  box-shadow: var(--elev-2);
+  border: 1px solid var(--hairline);
+  box-shadow: var(--fl-shadow-16);
 }
 
-/* Chrome (sidebar / top bar): solid, deep, hairline-separated. */
 .glass-nav {
   background: var(--canvas-deep);
 }
 
-/* Interactive control surface (buttons, fields). */
 .glass-control {
   background: var(--surface-3);
   border: 1px solid var(--hairline-strong);
 }
 
-/* ---- Terminal signatures --------------------------------------------------- */
+/* ---- Typographic signatures ----------------------------------------------- */
 
-/* Uppercase mono micro-label: metric captions, table heads, section eyebrows. */
+/* Was a 10.5px uppercase mono micro-label at ~3.5:1 contrast. Now a Fluent
+   caption: 12px semibold, sentence case, tertiary foreground — legible, and
+   it reads as Microsoft rather than as a terminal readout. */
 .mono-label {
-  font-family: var(--font-mono);
-  font-size: 10.5px;
-  font-weight: 500;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
+  font-family: var(--font-sans);
+  font-size: 0.75rem;
+  line-height: 1rem;
+  font-weight: 600;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--fl-fg-3);
 }
 
-/* Tabular mono numerics - the "readout" look for all live figures. */
+/* Tabular numerics for live figures. Segoe UI Variable has real tabular
+   figures, so numbers align without switching to a mono face. */
 .stat {
-  font-family: var(--font-mono);
   font-variant-numeric: tabular-nums;
   letter-spacing: -0.01em;
 }
 
-/* Soft mint glow for live / primary elements. */
-.glow-mint {
-  box-shadow: 0 0 0 1px var(--mint-dim), 0 8px 26px var(--mint-glow);
+/* Fluent nav selection indicator: a rounded brand bar on the leading edge. */
+.fl-selected-indicator::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  height: 16px;
+  width: 3px;
+  border-radius: 9999px;
+  background: var(--fl-brand-text);
 }
 
-/* Thin, dark scrollbars to match the console. */
+/* ---- Motion ---------------------------------------------------------------- */
+
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+.rise {
+  animation: rise 250ms cubic-bezier(0.1, 0.9, 0.2, 1) both;
+}
+
+@keyframes blink {
+  0%,
+  49% {
+    opacity: 1;
+  }
+  50%,
+  100% {
+    opacity: 0;
+  }
+}
+.blink {
+  animation: blink 1.05s step-end infinite;
+}
+
+/* ---- Marketing surface (public landing only) -------------------------------
+   Scroll-reveal and data-animation primitives. These are driven by a
+   data-attribute the <Reveal> client component flips when an element enters the
+   viewport, so a single observer animates a whole subtree. The global
+   prefers-reduced-motion block above collapses every duration here to ~0ms, and
+   a <noscript> override in the landing restores full opacity if JS never runs —
+   content must never be permanently invisible because an observer did not fire. */
+
+.mk-reveal {
+  opacity: 0;
+  transform: translateY(14px);
+  transition:
+    opacity 600ms var(--ease-decelerate),
+    transform 600ms var(--ease-decelerate);
+  transition-delay: var(--mk-delay, 0ms);
+}
+.mk-reveal[data-shown="true"] {
+  opacity: 1;
+  transform: none;
+}
+
+
+/* ---- Scrollbars ------------------------------------------------------------ */
+
 * {
   scrollbar-width: thin;
-  scrollbar-color: var(--surface-3) transparent;
+  scrollbar-color: var(--fl-scrollbar-thumb) transparent;
 }
 *::-webkit-scrollbar {
   width: 10px;
   height: 10px;
 }
 *::-webkit-scrollbar-thumb {
-  background: var(--surface-3);
+  background: var(--fl-scrollbar-thumb);
   border-radius: 8px;
   border: 2px solid transparent;
   background-clip: content-box;
 }
 *::-webkit-scrollbar-thumb:hover {
-  background: #2c3742;
+  background: var(--fl-scrollbar-thumb-hover);
   background-clip: content-box;
 }
 
-/* Visible keyboard focus everywhere. */
+/* ---- Focus ----------------------------------------------------------------- */
+
+/* Fluent dual focus ring. The inner light stroke + outer dark stroke means the
+   indicator stays visible whether it lands on a white card, a blue button, or
+   a dark canvas — which a single-color ring cannot guarantee. */
 :focus-visible {
-  outline: 2px solid var(--color-ring);
-  outline-offset: 2px;
+  outline: 2px solid var(--fl-focus-outer);
+  outline-offset: 1px;
+  box-shadow: 0 0 0 1px var(--fl-focus-inner);
   border-radius: 4px;
 }
 
-/* Respect reduced-motion. */
+/* ---- Windows High Contrast -------------------------------------------------
+   forced-colors replaces our palette with the user's system colors. Anything
+   drawn with background/border tricks disappears unless it is re-anchored to a
+   system color keyword.
+   --------------------------------------------------------------------------- */
+
+@media (forced-colors: active) {
+  .glass,
+  .glass-strong,
+  .glass-control {
+    border: 1px solid CanvasText;
+  }
+
+  :focus-visible {
+    outline: 2px solid Highlight;
+    outline-offset: 2px;
+    box-shadow: none;
+  }
+
+  .fl-selected-indicator::before {
+    background: Highlight;
+    forced-color-adjust: none;
+  }
+
+  /* Charts and status dots are meaning-bearing color; keep them rendered. */
+  svg [data-keep-color],
+  .fl-keep-color {
+    forced-color-adjust: none;
+  }
+}
+
+/* ---- Reduced motion --------------------------------------------------------- */
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,
   *::after {
     animation-duration: 0.001ms !important;
     animation-iteration-count: 1 !important;
+    /* Zeroing duration alone is not enough: the landing hero staggers with
+       animation-delay up to 690ms, and `.rise` uses animation-fill-mode both,
+       so the delay still held the content at opacity 0 for that long with no
+       animation to watch. Delays must go too. */
+    animation-delay: 0ms !important;
     transition-duration: 0.001ms !important;
+    transition-delay: 0ms !important;
     scroll-behavior: auto !important;
   }
 }

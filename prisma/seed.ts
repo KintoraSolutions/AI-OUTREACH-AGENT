@@ -143,6 +143,84 @@ async function main() {
     });
   }
 
+  // Mark the seed org onboarded with a filled company profile, so dev-login lands
+  // straight in the console (a fresh org with no such row is routed to onboarding).
+  await prisma.systemSetting.upsert({
+    where: { orgId_key: { orgId: org.id, key: "company.profile" } },
+    create: {
+      orgId: org.id,
+      key: "company.profile",
+      value: {
+        companyDescription: "A boutique studio that helps healthcare clinics win more patients online.",
+        offer: "Modern clinic websites, custom booking software, and KlearQ phone-queue management.",
+        method: "We audit each clinic's web presence and phone setup, then propose the highest-impact fix.",
+        targetAudience: "Independent and small-group healthcare clinics in North America.",
+        websiteUrl: "https://portfolio.example",
+        linkedinUrl: "https://linkedin.com/company/example-clinic-sales",
+        socialLinks: [],
+      },
+    },
+    update: {},
+  });
+
+  // The org's own AI configuration. KlearQ is just one configured offering here,
+  // not something the platform knows about.
+  await prisma.systemSetting.upsert({
+    where: { orgId_key: { orgId: org.id, key: "ai.profile" } },
+    create: {
+      orgId: org.id,
+      key: "ai.profile",
+      value: {
+        revision: 1,
+        industry: "healthcare",
+        presetKey: "healthcare",
+        useCase: "service_pitch",
+        offerings: [
+          {
+            key: "website-redesign",
+            slot: "WEBSITE",
+            name: "Website redesign",
+            shortLabel: "WEB",
+            description: "Fast, modern clinic websites that make booking effortless.",
+            pitchGuidance: "Focus on how a clearer booking path turns visitors into appointments.",
+            proofUrl: "https://portfolio.example",
+            enabled: true,
+          },
+          {
+            key: "custom-software",
+            slot: "SOFTWARE",
+            name: "Custom software",
+            shortLabel: "SW",
+            description: "Custom intake and workflow tools for multi-location clinics.",
+            pitchGuidance: "Focus on reducing repeated administrative work the evidence implies.",
+            proofUrl: null,
+            enabled: true,
+          },
+          {
+            key: "klearq",
+            slot: "KLEARQ",
+            name: "KlearQ",
+            shortLabel: "KQ",
+            description: "Phone queue and call management for clinics.",
+            pitchGuidance:
+              "Use careful wording such as 'may make call routing and callback visibility more difficult.' Never assert the clinic is losing calls or revenue.",
+            proofUrl: "https://klearq.example",
+            enabled: true,
+          },
+        ],
+        primaryOfferingKey: "website-redesign",
+        terminology: ["clinic", "patients", "practice"],
+        avoidTerms: ["customer"],
+        customGuardrails: [],
+        audienceNote: "Independent and small-group healthcare clinics in North America.",
+        learned: { styleNotes: null, updatedAt: null, feedbackCount: 0 },
+        confirmedAt: new Date().toISOString(),
+        inferred: { at: null, model: null },
+      },
+    },
+    update: {},
+  });
+
   for (const c of CLINICS) {
     const dedupeKey = computeDedupeKey({ name: c.name, websiteUrl: c.websiteUrl, primaryAddress: c.address });
     const existing = await prisma.clinic.findUnique({

@@ -531,8 +531,12 @@ export async function importLeadsCsv(_prev: FormState, formData: FormData): Prom
   if (!(file instanceof File) || file.size === 0) {
     return fail("Choose a CSV file to import.");
   }
-  if (file.size > 5 * 1024 * 1024) {
-    return fail("File is too large (max 5 MB).");
+  // Kept at or below the Server Action body limit in next.config.ts. A larger
+  // ceiling here is not generosity: the platform rejects an oversized body at
+  // the edge with an opaque 413 before this code runs, so the friendly message
+  // below would never be the one the operator sees.
+  if (file.size > 4 * 1024 * 1024) {
+    return fail("File is too large (max 4 MB). Split the file and import it in parts.");
   }
 
   const text = await file.text();

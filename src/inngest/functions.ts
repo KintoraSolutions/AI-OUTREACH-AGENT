@@ -39,7 +39,7 @@ function failJob(jobId: string | undefined, message: string, stack: string | nul
 }
 
 /**
- * Durable campaign-research function (plan.md Section 5). It adapts Inngest's
+ * Durable campaign-research function (docs/planning/build-plan.md Section 5). It adapts Inngest's
  * `step.run` onto the runner-agnostic `JobStepRunner` the pipeline expects, so
  * the exact same orchestrator that runs inline also runs here — only now each
  * step is memoized for durable resume.
@@ -148,7 +148,7 @@ export const bulkDrafting = inngest.createFunction(
 );
 
 /**
- * Scheduled data-retention purge (plan.md Section 12). Runs daily and purges
+ * Scheduled data-retention purge (docs/planning/build-plan.md Section 12). Runs daily and purges
  * each org's stale, unengaged research data using that org's own `retentionDays`
  * (0 disables it). Active/engaged records are always protected, the purge is
  * idempotent and batched, and every run appends an immutable `RetentionRun`

@@ -6,7 +6,7 @@ import type { DraftFinding, EvidenceItem } from "@/lib/ai/draft-types";
  * allowed to state. Only NON-DISMISSED findings that are "sufficiently
  * supported" (VERIFIED or STRONG_INFERENCE) are citable. Weak inferences and
  * unknowns are deliberately excluded, so the engine can never write a weak
- * inference as if it were established (plan.md Section 7 hallucination rules).
+ * inference as if it were established (docs/planning/build-plan.md Section 7 hallucination rules).
  *
  * A manual score override is NOT evidence: it changes which service is pitched,
  * but the only things a draft may state come from these findings.

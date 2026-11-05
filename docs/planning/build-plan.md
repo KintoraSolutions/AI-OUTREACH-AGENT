@@ -1,6 +1,6 @@
 # Implementation Plan: AI Healthcare Outreach Agent
 
-This plan maps every requirement in [ai-healthcare-outreach-agent.md](ai-healthcare-outreach-agent.md) to a concrete implementation task. It is the Phase 1 deliverable. No implementation has started. Read the "Open Questions and Assumptions" section before building, because several requirements depend on decisions the plan flags for the user.
+This plan maps every requirement in [product-brief.md](product-brief.md) to a concrete implementation task. It is the Phase 1 deliverable. No implementation has started. Read the "Open Questions and Assumptions" section before building, because several requirements depend on decisions the plan flags for the user.
 
 Guiding principles carried from the spec: reliability, evidence, human oversight, and maintainability over scraping volume. Every data provider, AI model, email provider, and research method is behind a swappable service interface. Nothing is a placeholder that looks operational but is not wired to real logic.
 
@@ -12,7 +12,7 @@ The repository is effectively empty. It contains only the requirements document.
 
 ```
 Outreach AI/
-  ai-healthcare-outreach-agent.md   requirements (16 KB)
+  product-brief.md   requirements (16 KB)
 ```
 
 Findings:
@@ -917,7 +917,7 @@ Ordered to match the spec's phases. Each item is a concrete task.
 Phase 1: Planning (this document)
 
 - [x] Inspect repository and summarize current architecture.
-- [x] Create `plan.md`.
+- [x] Create `docs/planning/build-plan.md`.
 - [x] Identify missing env vars and integrations (Section 11).
 - [x] Propose database schema (Section 3).
 - [x] List assumptions (Open Questions section).

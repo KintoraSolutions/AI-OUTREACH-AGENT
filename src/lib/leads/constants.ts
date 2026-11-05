@@ -77,10 +77,16 @@ export const LEAD_SOURCE_LABELS: Record<LeadSource, string> = {
   RESEARCH: "Research",
 };
 
+/**
+ * Neutral fallback names for the opportunity areas. The organization's own names
+ * come from its AI profile offerings — resolve display labels with
+ * `buildServiceLabels(profile)` / `serviceLabel(profile, service)` from
+ * `@/lib/ai/offering-labels` wherever a profile is available.
+ */
 export const SERVICE_LABELS: Record<RecommendedService, string> = {
-  WEBSITE: "Website redesign",
+  WEBSITE: "Website",
   SOFTWARE: "Custom software",
-  KLEARQ: "KlearQ",
+  KLEARQ: "Phone operations",
   COMBINED: "Combined",
   NONE: "None",
 };
@@ -97,10 +103,11 @@ export function isFactConfidence(c: Confidence): boolean {
   return c === Confidence.VERIFIED;
 }
 
+/** Neutral fallbacks; see the note on SERVICE_LABELS for profile-aware naming. */
 export const FINDING_CATEGORY_LABELS: Record<FindingCategory, string> = {
   WEBSITE: "Website",
   SOFTWARE: "Custom software",
-  KLEARQ: "KlearQ",
+  KLEARQ: "Phone operations",
   CONTACTABILITY: "Contactability",
   BUSINESS_FIT: "Business fit",
 };

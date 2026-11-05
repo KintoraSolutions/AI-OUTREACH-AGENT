@@ -8,7 +8,7 @@ import type {
 } from "@/lib/research/types";
 
 /**
- * Durable, resumable, idempotent, rate-limited bulk drafting (plan.md Section 7).
+ * Durable, resumable, idempotent, rate-limited bulk drafting (docs/planning/build-plan.md Section 7).
  * Mirrors the research orchestrator: every unit of work is wrapped in
  * `steps.run(id, fn)` so under Inngest each completed clinic is memoized (safe
  * replay after retries/restarts/duplicate delivery), while inline/test runs pass

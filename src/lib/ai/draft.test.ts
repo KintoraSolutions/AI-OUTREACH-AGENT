@@ -6,6 +6,8 @@ import { AnthropicAiProvider, DEFAULT_AI_MODEL } from "@/lib/ai/anthropic";
 import { getAiProvider } from "@/lib/ai/provider";
 import { AiNotConfiguredError } from "@/lib/ai/errors";
 import type { DraftClinic, DraftFinding, DraftScoreSummary, OrgIdentity } from "@/lib/ai/draft-types";
+import { DEFAULT_EMAIL_VOICE } from "@/lib/ai/email-voice";
+import { DEFAULT_COMPANY_PROFILE } from "@/lib/ai/company-profile";
 
 const ORG: OrgIdentity = {
   companyName: "Acme Studio",
@@ -13,9 +15,6 @@ const ORG: OrgIdentity = {
   contactUrl: "https://acme.example/contact",
   senderName: "Sam",
   senderEmail: "sam@acme.example",
-  klearqProductName: "KlearQ",
-  klearqTagline: "Phone queue management",
-  klearqUrl: "https://klearq.example",
 };
 
 const CLINIC: DraftClinic = {
@@ -83,7 +82,7 @@ describe("generateDraft (engine)", () => {
 
     expect(res.status).toBe("GENERATED");
     expect(res.service).toBe(RecommendedService.WEBSITE);
-    expect(res.promptVersion).toBe("draft-v1");
+    expect(res.promptVersion).toBe("draft-v3");
     expect(res.aiProvider).toBe("fake");
     expect(res.personalizationEvidence.map((e) => e.code)).toContain("web_no_booking_cta");
 
@@ -92,6 +91,101 @@ describe("generateDraft (engine)", () => {
     expect(prompt).toContain("web_missing_https"); // verified fact is citable
     expect(prompt).not.toContain("web_missing_location"); // weak inference excluded
     expect(prompt).not.toContain("web_poor_performance"); // dismissed excluded
+  });
+
+  it("applies the configured email voice (tone, length, objective, signature, instructions)", async () => {
+    const fake = new FakeAiProvider({ respond: () => goodDraft() });
+    await generateDraft({
+      clinic: CLINIC,
+      org: ORG,
+      score: websiteScore(),
+      findings: WEBSITE_FINDINGS,
+      provider: fake,
+      voice: {
+        ...DEFAULT_EMAIL_VOICE,
+        tone: "warm",
+        length: "short",
+        objective: "book a short intro call",
+        signatureEnabled: true,
+        senderTitle: "Founder",
+        signOff: "Cheers,",
+        customInstructions: "Never mention pricing.",
+      },
+    });
+
+    const prompt = fake.calls[0]!.prompt;
+    expect(prompt).toContain("Warm and friendly");
+    expect(prompt).toContain("60 to 100 words");
+    expect(prompt).toContain("book a short intro call");
+    expect(prompt).toContain("Never mention pricing.");
+    // Signature is built from org.senderName + configured title + company.
+    expect(prompt).toContain("Cheers,");
+    expect(prompt).toContain("Sam, Founder");
+    expect(prompt).toContain("Acme Studio");
+  });
+
+  it("feeds the company profile as sender context and prefers its offer over the voice value prop", async () => {
+    const fake = new FakeAiProvider({ respond: () => goodDraft() });
+    await generateDraft({
+      clinic: CLINIC,
+      org: ORG,
+      score: websiteScore(),
+      findings: WEBSITE_FINDINGS,
+      provider: fake,
+      voice: { ...DEFAULT_EMAIL_VOICE, valueProp: "voice-level offer line" },
+      profile: {
+        ...DEFAULT_COMPANY_PROFILE,
+        companyDescription: "We help clinics grow online.",
+        offer: "Custom booking software",
+        method: "We audit then build.",
+        targetAudience: "Independent clinics",
+        websiteUrl: "https://acme.example",
+      },
+    });
+
+    const prompt = fake.calls[0]!.prompt;
+    expect(prompt).toContain("About the sender");
+    expect(prompt).toContain("We help clinics grow online.");
+    expect(prompt).toContain("We audit then build.");
+    expect(prompt).toContain("Independent clinics");
+    // profile.offer takes precedence over voice.valueProp for the offer line.
+    expect(prompt).toContain("Custom booking software");
+    expect(prompt).not.toContain("voice-level offer line");
+  });
+
+  it("falls back to the email-voice value prop for the offer line when the profile has no offer", async () => {
+    const fake = new FakeAiProvider({ respond: () => goodDraft() });
+    await generateDraft({
+      clinic: CLINIC,
+      org: ORG,
+      score: websiteScore(),
+      findings: WEBSITE_FINDINGS,
+      provider: fake,
+      voice: { ...DEFAULT_EMAIL_VOICE, valueProp: "voice-level offer line" },
+      profile: { ...DEFAULT_COMPANY_PROFILE }, // no profile.offer -> fall back to valueProp
+    });
+    const prompt = fake.calls[0]!.prompt;
+    expect(prompt).toContain("What the sender offers");
+    expect(prompt).toContain("voice-level offer line");
+  });
+
+  it("adds no sender-background block when the company profile is empty", async () => {
+    const fake = new FakeAiProvider({ respond: () => goodDraft() });
+    await generateDraft({ clinic: CLINIC, org: ORG, score: websiteScore(), findings: WEBSITE_FINDINGS, provider: fake });
+    expect(fake.calls[0]!.prompt).not.toContain("About the sender");
+  });
+
+  it("omits the signature block when the voice disables it", async () => {
+    const fake = new FakeAiProvider({ respond: () => goodDraft() });
+    await generateDraft({
+      clinic: CLINIC,
+      org: ORG,
+      score: websiteScore(),
+      findings: WEBSITE_FINDINGS,
+      provider: fake,
+      voice: { ...DEFAULT_EMAIL_VOICE, signatureEnabled: false },
+    });
+    expect(fake.calls[0]!.prompt).not.toContain("End the email with exactly this sign-off");
   });
 
   it("rejects a claim with no supporting evidence (blocks the draft)", async () => {
@@ -228,6 +322,6 @@ describe("Anthropic provider configuration", () => {
 
   it("uses the real provider (never a fake) and a configurable, non-hardcoded model", () => {
     expect(getAiProvider().name).toBe("anthropic");
-    expect(DEFAULT_AI_MODEL).toBe("claude-opus-5");
+    expect(DEFAULT_AI_MODEL).toBe("claude-sonnet-5");
   });
 });

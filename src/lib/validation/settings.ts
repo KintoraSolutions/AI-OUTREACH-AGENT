@@ -20,20 +20,8 @@ export const orgIdentitySchema = z.object({
   contactUrl: optUrl,
   senderName: optStr,
   senderEmail: optEmail,
-  klearqProductName: optStr,
-  klearqTagline: optStr,
-  klearqUrl: optUrl,
-  // One capability per line in the textarea.
-  klearqCapabilities: z.preprocess(
-    (v) =>
-      typeof v === "string"
-        ? v
-            .split("\n")
-            .map((s) => s.trim())
-            .filter(Boolean)
-        : v,
-    z.array(z.string().max(300)).max(50).default([]),
-  ),
+  // What the organization SELLS is configured in its AI profile offerings
+  // (SystemSetting `ai.profile`), not as product-specific columns here.
 });
 
 export type OrgIdentityInput = z.infer<typeof orgIdentitySchema>;

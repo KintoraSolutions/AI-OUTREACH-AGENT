@@ -1,6 +1,9 @@
 import {
   ActivityType,
   CampaignStatus,
+  Confidence,
+  ContactPublisher,
+  DecisionRole,
   EmailStatus,
   JobStatus,
   LeadSource,
@@ -8,6 +11,15 @@ import {
   Prisma,
 } from "@prisma/client";
 import { prisma } from "@/lib/db";
+import { isDecisionMakerRole } from "@/lib/people/roles";
+import { buildPersonFindings } from "@/lib/people/findings";
+import {
+  hostOf,
+  normalizePersonName,
+  resolveIdentity,
+  type KnownPerson,
+} from "@/lib/people/identity";
+import { getDatabaseEncoding, sanitizeDeep, sanitizeForEncoding } from "@/lib/db/encoding";
 import { loadScoringConfig } from "@/lib/scoring/config";
 import type { ScoreResult, ScoringConfig } from "@/lib/scoring/types";
 import type {
@@ -104,13 +116,17 @@ export class PrismaResearchRepository implements ResearchRepository {
   }
 
   async logError(jobId: string, error: LoggedError): Promise<void> {
+    // The encoding failure hit this table too: an error whose message quoted a
+    // clinic name containing CJK could not be written, so the run lost the
+    // record of why it failed.
+    const encoding = await getDatabaseEncoding();
     await prisma.errorLog.create({
       data: {
         jobId,
         scope: error.scope,
-        targetUrl: error.targetUrl ?? null,
-        message: error.message.slice(0, 2000),
-        stack: error.stack ?? null,
+        targetUrl: sanitizeForEncoding(error.targetUrl ?? null, encoding),
+        message: sanitizeForEncoding(error.message.slice(0, 2000), encoding),
+        stack: sanitizeForEncoding(error.stack ?? null, encoding),
         retryable: error.retryable,
       },
     });
@@ -126,9 +142,14 @@ export class PrismaResearchRepository implements ResearchRepository {
   async saveClinic(
     orgId: string,
     campaignId: string,
-    result: ClinicResearchResult,
+    rawResult: ClinicResearchResult,
     score: ScoreResult,
   ): Promise<"created" | "duplicate"> {
+    // Fold text the server encoding cannot hold. On a WIN1252 cluster a clinic
+    // whose name carries an emoji used to fail the INSERT outright (Postgres
+    // 22P05) and the lead was lost; it is now saved with the symbol stripped.
+    // No-op on a UTF8 database.
+    const result = sanitizeDeep(rawResult, await getDatabaseEncoding());
     const now = new Date();
     // The clinic, its audit + findings, and its score are written in ONE
     // transaction. Duplicate prevention (the unique dedupeKey) rolls the whole
@@ -234,6 +255,163 @@ export class PrismaResearchRepository implements ResearchRepository {
             },
           },
         });
+
+        // People the clinic publishes about itself.
+        //
+        // A person is org-scoped, not clinic-scoped: the same physician can
+        // practise at several clinics, and recognising that is the whole point
+        // of affiliation mapping. Matched on the normalized name within the
+        // org, which is a bounded indexed lookup, never a scan.
+        //
+        // Deliberately conservative: a name match alone creates an affiliation,
+        // never a merge of two verified identities. Stronger resolution lands
+        // in P3.1 with the CPSO record as a corroborating signal.
+        const clinicHost = hostOf(result.websiteUrl);
+
+        for (const person of result.people) {
+          const normalized = normalizePersonName(person.fullName);
+
+          // Narrow to plausible candidates before deciding: people sharing the
+          // normalized name, plus anyone already holding this address. Both
+          // are indexed lookups, never a scan.
+          const selection = {
+            id: true,
+            normalizedName: true,
+            contacts: { select: { email: true } },
+            affiliations: { select: { clinic: { select: { websiteUrl: true } } } },
+          } as const;
+
+          const [sameName, sameEmail] = await Promise.all([
+            normalized
+              ? tx.person.findMany({ where: { orgId, normalizedName: normalized }, select: selection, take: 25 })
+              : Promise.resolve([]),
+            person.email
+              ? tx.person.findMany({
+                  where: { orgId, contacts: { some: { email: person.email } } },
+                  select: selection,
+                  take: 5,
+                })
+              : Promise.resolve([]),
+          ]);
+
+          const known = new Map<string, KnownPerson>();
+          for (const row of [...sameEmail, ...sameName]) {
+            known.set(row.id, {
+              id: row.id,
+              normalizedName: row.normalizedName,
+              emails: row.contacts.map((c) => c.email),
+              hosts: row.affiliations.map((a) => hostOf(a.clinic.websiteUrl)),
+            });
+          }
+
+          // A name alone never merges two people: see lib/people/identity.ts.
+          // Two records for one physician costs a duplicate row; one record for
+          // two physicians sends an email about the wrong clinic.
+          const match = resolveIdentity(
+            { normalizedName: normalized, email: person.email, host: clinicHost },
+            [...known.values()],
+          );
+
+          const personId =
+            match?.personId ??
+            (
+              await tx.person.create({
+                data: { orgId, fullName: person.fullName, normalizedName: normalized },
+                select: { id: true },
+              })
+            ).id;
+
+          await tx.personAffiliation.upsert({
+            where: { personId_clinicId: { personId, clinicId: clinic.id } },
+            create: {
+              personId,
+              clinicId: clinic.id,
+              role: person.classification?.role ?? DecisionRole.OTHER,
+              roleTitle: person.roleTitle,
+              isOwner: person.classification?.isOwner ?? false,
+              confidence: person.classification?.confidence ?? Confidence.WEAK_INFERENCE,
+              sourceUrl: person.sourceUrl,
+            },
+            update: { lastSeenAt: now },
+          });
+
+          // Re-derive this person's evidence from every affiliation they now
+          // hold, not just this clinic. A second clinic is what turns a
+          // single-site contact into a multi-location lead, and that is only
+          // visible from the whole set.
+          const affiliations = await tx.personAffiliation.findMany({
+            where: { personId },
+            select: {
+              role: true,
+              roleTitle: true,
+              isOwner: true,
+              confidence: true,
+              sourceUrl: true,
+              clinic: { select: { name: true } },
+            },
+            take: 50,
+          });
+
+          const personFindings = buildPersonFindings(
+            person.fullName,
+            affiliations.map((a) => ({
+              clinicName: a.clinic.name,
+              role: a.role,
+              roleTitle: a.roleTitle,
+              isOwner: a.isOwner,
+              confidence: a.confidence,
+              sourceUrl: a.sourceUrl,
+            })),
+            person.email,
+          );
+
+          // A role can change between runs ("Optometrist" becoming "Medical
+          // Director"), and the code changes with it. Without pruning, the old
+          // role finding would linger and the person would score for both.
+          const keep = personFindings.map((f) => f.code);
+          await tx.personFinding.deleteMany({
+            where: { personId, code: { notIn: keep.length > 0 ? keep : ["__none__"] } },
+          });
+
+          for (const finding of personFindings) {
+            // Upsert: a person researched again through a second clinic must
+            // update their evidence, never collide on (personId, code).
+            await tx.personFinding.upsert({
+              where: { personId_code: { personId, code: finding.code } },
+              create: { personId, ...finding },
+              update: {
+                finding: finding.finding,
+                evidence: finding.evidence,
+                sourceUrl: finding.sourceUrl,
+                confidence: finding.confidence,
+                isFact: finding.isFact,
+                collectedAt: now,
+              },
+            });
+          }
+
+          // Only an address the clinic actually published. Never inferred, and
+          // only marked a decision-maker mailbox when the stated role says so:
+          // that flag is what draft-repository.ts uses to choose a recipient.
+          if (person.email) {
+            await tx.contact.create({
+              data: {
+                clinicId: clinic.id,
+                personId,
+                name: person.fullName,
+                jobTitle: person.roleTitle,
+                email: person.email,
+                emailStatus: EmailStatus.UNVERIFIED,
+                isDecisionMaker: person.classification
+                  ? isDecisionMakerRole(person.classification.role)
+                  : false,
+                publishedBy: ContactPublisher.CLINIC,
+                sourceUrl: person.sourceUrl,
+                collectedAt: now,
+              },
+            });
+          }
+        }
 
         await tx.leadScore.create({
           data: {

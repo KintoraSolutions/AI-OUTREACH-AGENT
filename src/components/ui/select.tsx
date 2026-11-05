@@ -1,10 +1,15 @@
 import * as React from "react";
 import { ChevronDown } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { inputBaseClasses } from "@/components/ui/input";
 
 /**
  * A styled native <select>. Native is intentional: it keeps the dependency
- * surface small, is fully accessible, and works inside plain form submissions.
+ * surface small, is fully accessible, works inside plain form submissions, and
+ * on Windows it renders the real system dropdown — which is exactly right for
+ * a Fluent interface.
+ *
+ * Shares `inputBaseClasses` with Input so the two never drift apart.
  */
 const Select = React.forwardRef<
   HTMLSelectElement,
@@ -14,15 +19,16 @@ const Select = React.forwardRef<
     <div className="relative">
       <select
         ref={ref}
-        className={cn(
-          "glass-control flex h-10 w-full cursor-pointer appearance-none rounded-[8px] px-3 py-1 pr-9 text-[15px] transition-[box-shadow,border-color] focus-visible:border-[var(--mint)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50",
-          className,
-        )}
+        className={cn(inputBaseClasses, "cursor-pointer appearance-none pr-9", className)}
         {...props}
       >
         {children}
       </select>
-      <ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+      <ChevronDown
+        aria-hidden="true"
+        className="pointer-events-none absolute right-2.5 top-1/2 size-4 -translate-y-1/2 text-[var(--fl-fg-3)]"
+        strokeWidth={2}
+      />
     </div>
   );
 });

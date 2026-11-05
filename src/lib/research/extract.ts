@@ -7,7 +7,7 @@ import type { ExtractedLocation, ExtractedSiteInfo } from "@/lib/research/types"
  * viewport/HTTPS) are cheap to read with targeted parsing, and this keeps the
  * step pure and easy to unit-test.
  *
- * Compliance (plan.md Section 6): only business-contact and marketing content
+ * Compliance (docs/planning/build-plan.md Section 6): only business-contact and marketing content
  * presented on the clinic's public site is read. No patient data, no health
  * records, and nothing from gated/authenticated pages is collected.
  */

@@ -1,12 +1,16 @@
-import Link from "next/link";
-import { ShieldCheck } from "lucide-react";
+import { redirect } from "next/navigation";
 import { requireOrgContext } from "@/lib/auth/rbac";
+import { isOrgOnboarded } from "@/lib/ai/company-profile";
 import { ROLE_LABELS } from "@/lib/leads/constants";
-import { SidebarNav } from "@/components/app/sidebar-nav";
-import { MobileNav } from "@/components/app/mobile-nav";
-import { OrgSwitcher } from "@/components/app/org-switcher";
-import { UserMenu } from "@/components/app/user-menu";
+import { TooltipProvider } from "@/components/ui/tooltip";
+import { AppHeader, BreadcrumbBar } from "@/components/app/app-header";
+import { NavRail } from "@/components/app/nav-rail";
 
+/**
+ * Fluent suite shell: a 48px header (brand, global search, help, theme,
+ * settings, account), a collapsible navigation rail, and a breadcrumb strip
+ * above the page. The header used to hold nothing but a user chip.
+ */
 export default async function DashboardLayout({
   children,
 }: {
@@ -14,50 +18,42 @@ export default async function DashboardLayout({
 }) {
   const ctx = await requireOrgContext();
 
-  return (
-    <div className="flex min-h-screen flex-col md:flex-row">
-      <a
-        href="#main-content"
-        className="sr-only focus:not-sr-only focus:absolute focus:left-4 focus:top-4 focus:z-50 focus:rounded-md focus:bg-background focus:px-3 focus:py-2 focus:text-sm focus:shadow-md focus:ring-2 focus:ring-ring"
-      >
-        Skip to content
-      </a>
-      <aside className="glass-nav flex flex-col border-b border-[var(--hairline)] md:sticky md:top-0 md:h-screen md:w-[228px] md:shrink-0 md:border-b-0 md:border-r">
-        <div className="flex items-center gap-2 border-b border-[var(--hairline)] px-4 py-3.5">
-          <ShieldCheck className="size-5 shrink-0 text-foreground" strokeWidth={1.75} />
-          <Link href="/dashboard" className="text-[15px] font-semibold tracking-[-0.01em]">
-            Outreach Agent
-          </Link>
-        </div>
-        <div className="px-3 py-2.5">
-          <OrgSwitcher
-            activeOrgId={ctx.orgId}
-            activeOrgName={ctx.orgName}
-            memberships={ctx.memberships}
-          />
-        </div>
-        <nav aria-label="Primary" className="hidden md:block">
-          <SidebarNav />
-        </nav>
-      </aside>
+  // First-run gate: route brand-new orgs through onboarding before the console.
+  if (!(await isOrgOnboarded(ctx.orgId))) redirect("/onboarding");
 
-      <div className="flex min-w-0 flex-1 flex-col">
-        <header className="sticky top-0 z-30 flex items-center justify-between gap-4 border-b border-[var(--hairline)] bg-[var(--background)] px-4 py-2.5 md:px-[30px]">
-          <MobileNav />
-          <div className="ml-auto flex items-center gap-2.5">
-            <UserMenu name={ctx.userName} email={ctx.userEmail} role={ROLE_LABELS[ctx.role]} />
-            <div className="hidden leading-tight sm:block">
-              <p className="text-[11px] text-muted-foreground">{ROLE_LABELS[ctx.role]}</p>
-              <p className="max-w-[140px] truncate text-[13px] font-medium text-foreground">
-                {ctx.userName ?? ctx.userEmail}
-              </p>
-            </div>
+  return (
+    <TooltipProvider delayDuration={300}>
+      <div className="flex min-h-screen flex-col bg-[var(--fl-bg-3)]">
+        <a
+          href="#main-content"
+          className="sr-only focus:not-sr-only focus:absolute focus:left-3 focus:top-3 focus:z-50 focus:rounded-md focus:border focus:border-[var(--fl-stroke-1)] focus:bg-[var(--fl-bg-1)] focus:px-3 focus:py-2 focus:text-body1 focus:font-semibold focus:shadow-16"
+        >
+          Skip to content
+        </a>
+
+        <AppHeader
+          userName={ctx.userName}
+          userEmail={ctx.userEmail}
+          roleLabel={ROLE_LABELS[ctx.role]}
+          activeOrgId={ctx.orgId}
+          activeOrgName={ctx.orgName}
+          memberships={ctx.memberships}
+        />
+
+        <div className="flex min-h-0 flex-1 flex-col md:flex-row">
+          <NavRail />
+
+          <div className="flex min-w-0 flex-1 flex-col">
+            <BreadcrumbBar />
+            <main
+              id="main-content"
+              className="mx-auto w-full max-w-6xl flex-1 px-4 py-6 md:px-6"
+            >
+              {children}
+            </main>
           </div>
-        </header>
-        <main id="main-content" className="mx-auto w-full max-w-6xl flex-1 px-4 py-5 md:px-[30px]">
-          {children}
-        </main>
+        </div>
       </div>
-    </div>
+    </TooltipProvider>
   );
 }

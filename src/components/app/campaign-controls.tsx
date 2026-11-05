@@ -20,6 +20,12 @@ interface CampaignControlsProps {
   status: CampaignStatus;
   discoveryConfigured: boolean;
   canManage: boolean;
+  /**
+   * Run/resume only, with no pause, cancel or delete. Used where research is
+   * offered as the fix for an issue rather than as campaign administration —
+   * a Delete button next to "3 leads have not been scored" invites an accident.
+   */
+  compact?: boolean;
 }
 
 export function CampaignControls({
@@ -27,13 +33,14 @@ export function CampaignControls({
   status,
   discoveryConfigured,
   canManage,
+  compact = false,
 }: CampaignControlsProps) {
   const [pending, startTransition] = useTransition();
   const router = useRouter();
 
   if (!canManage) {
     return (
-      <p className="text-xs text-muted-foreground">
+      <p className="text-caption1 text-[var(--fl-fg-3)]">
         You need an Admin role to run or manage research for this campaign.
       </p>
     );
@@ -78,7 +85,7 @@ export function CampaignControls({
         </Button>
       ) : null}
 
-      {isRunning ? (
+      {isRunning && !compact ? (
         <>
           <Button size="sm" variant="outline" onClick={run(pauseCampaign)} disabled={pending}>
             <Pause />
@@ -97,23 +104,31 @@ export function CampaignControls({
             <RotateCcw />
             Resume
           </Button>
-          <Button size="sm" variant="outline" onClick={run(cancelCampaign)} disabled={pending}>
-            <Ban />
-            Cancel
-          </Button>
+          {!compact ? (
+            <Button size="sm" variant="outline" onClick={run(cancelCampaign)} disabled={pending}>
+              <Ban />
+              Cancel
+            </Button>
+          ) : null}
         </>
       ) : null}
 
-      <Button
-        size="sm"
-        variant="ghost"
-        className="text-destructive hover:text-destructive"
-        onClick={remove}
-        disabled={pending || isRunning}
-      >
-        <Trash2 />
-        Delete
-      </Button>
+      {isRunning && compact ? (
+        <p className="text-caption1 text-[var(--fl-fg-3)]">Research is running.</p>
+      ) : null}
+
+      {!compact ? (
+        <Button
+          size="sm"
+          variant="ghost"
+          className="text-destructive hover:text-destructive"
+          onClick={remove}
+          disabled={pending || isRunning}
+        >
+          <Trash2 />
+          Delete
+        </Button>
+      ) : null}
     </div>
   );
 }

@@ -3,27 +3,37 @@ import { Slot } from "@radix-ui/react-slot";
 import { cva, type VariantProps } from "class-variance-authority";
 import { cn } from "@/lib/utils";
 
+/**
+ * Fluent 2 button. Square-ish 4px corners, a flat brand fill, and discrete
+ * hover/pressed colors rather than a brightness filter — Fluent moves between
+ * named ramp steps, which keeps contrast predictable in both themes (a
+ * brightness filter on a dark fill can silently drop text contrast).
+ */
 const buttonVariants = cva(
-  "inline-flex cursor-pointer select-none items-center justify-center gap-2 whitespace-nowrap rounded-[8px] text-[13px] font-semibold tracking-[0.005em] transition-[transform,background-color,box-shadow,filter,border-color] duration-150 ease-out active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:pointer-events-none disabled:opacity-45 [&_svg]:size-4 [&_svg]:shrink-0",
+  "inline-flex cursor-pointer select-none items-center justify-center gap-2 whitespace-nowrap rounded-md text-body1 font-semibold transition-colors duration-100 ease-[var(--ease-easy)] focus-visible:outline-offset-2 disabled:pointer-events-none disabled:opacity-45 [&_svg]:size-4 [&_svg]:shrink-0",
   {
     variants: {
       variant: {
-        // Muted-mint primary, flat (no glow), dark ink.
         default:
-          "bg-primary text-primary-foreground shadow-[0_1px_2px_rgba(0,0,0,0.3)] hover:brightness-[1.05]",
+          "bg-[var(--fl-brand)] text-[var(--fl-on-brand)] hover:bg-[var(--fl-brand-hover)] active:bg-[var(--fl-brand-pressed)]",
         destructive:
-          "bg-destructive text-destructive-foreground shadow-[0_1px_2px_rgba(0,0,0,0.3)] hover:brightness-[1.05]",
-        // Secondary control surface with hairline border.
-        outline: "glass-control text-foreground hover:border-[var(--hairline-strong)] hover:bg-[var(--surface-2)]",
-        secondary: "bg-secondary text-secondary-foreground hover:brightness-125",
-        ghost: "text-muted-foreground hover:bg-[var(--muted)] hover:text-foreground",
-        link: "text-primary underline-offset-4 hover:underline",
+          "bg-[var(--fl-danger-fg)] text-white hover:brightness-110 active:brightness-95",
+        // Fluent "secondary": neutral surface, accessible stroke.
+        outline:
+          "border border-[var(--fl-stroke-1)] bg-[var(--fl-bg-1)] text-foreground hover:bg-[var(--fl-bg-1-hover)] active:bg-[var(--fl-bg-4)]",
+        secondary:
+          "bg-[var(--fl-bg-4)] text-secondary-foreground hover:bg-[var(--fl-bg-5)] active:bg-[var(--fl-bg-6)]",
+        // Fluent "subtle": transparent until hovered.
+        ghost:
+          "text-[var(--fl-fg-2)] hover:bg-[var(--muted)] hover:text-foreground active:bg-[var(--fl-subtle-pressed)]",
+        link: "text-[var(--fl-brand-text)] underline-offset-4 hover:underline",
       },
       size: {
         default: "h-10 px-4",
-        sm: "h-9 rounded-[7px] px-3 text-[12px]",
-        lg: "h-11 rounded-[9px] px-6 text-[14px]",
+        sm: "h-8 px-3 text-caption1",
+        lg: "h-12 px-6 text-body2",
         icon: "size-10",
+        "icon-sm": "size-8",
       },
     },
     defaultVariants: {

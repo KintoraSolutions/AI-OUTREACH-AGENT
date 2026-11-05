@@ -10,7 +10,7 @@ import type {
 /**
  * Null discovery provider. Used when GOOGLE_PLACES_API_KEY is absent: it reports
  * itself unconfigured and throws if called, so the app shows a clear
- * configuration state instead of fabricating clinics (plan.md Section 2B).
+ * configuration state instead of fabricating clinics (docs/planning/build-plan.md Section 2B).
  */
 export class NullDiscoveryProvider implements DiscoveryProvider {
   readonly name = "none";
@@ -42,7 +42,7 @@ interface PlacePayload {
 
 /**
  * Google Places API (New) discovery via the Text Search endpoint. This is
- * compliant API access — not scraping Google Maps — per plan.md Section 6. The
+ * compliant API access — not scraping Google Maps — per docs/planning/build-plan.md Section 6. The
  * key is restricted and never sent to the client.
  */
 export class GooglePlacesDiscoveryProvider implements DiscoveryProvider {

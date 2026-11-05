@@ -1,5 +1,5 @@
 /**
- * AiProvider contract (plan.md Section 7). A provider turns a prompt plus a JSON
+ * AiProvider contract (docs/planning/build-plan.md Section 7). A provider turns a prompt plus a JSON
  * schema into a validated, structured object. The interface is intentionally
  * small and provider-agnostic so Anthropic can be swapped for another model or a
  * deterministic fake (tests only) without touching the drafting engine.

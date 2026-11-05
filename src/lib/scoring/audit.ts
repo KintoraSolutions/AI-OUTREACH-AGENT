@@ -7,7 +7,7 @@ import type {
 } from "@/lib/research/types";
 
 /**
- * Deterministic website + business audit (plan.md Section 6). Turns the publicly
+ * Deterministic website + business audit (docs/planning/build-plan.md Section 6). Turns the publicly
  * collected evidence — fetched HTML structure, HTTP/metadata, PageSpeed (when
  * configured), and discovery facts — into neutral, evidence-backed findings
  * across all five opportunity areas. No hosted browser is required; rendered
@@ -238,7 +238,7 @@ export function buildAuditFindings(input: AuditInput): ResearchFinding[] {
       `The site has ${site!.linkCount} links, suggesting deep or complex navigation.`, C.WEAK_INFERENCE);
   }
 
-  // --- KlearQ opportunity ---
+  // --- Phone operations opportunity ---
   if (input.locationCount > 1) {
     add(F.KLEARQ, "kq_multiple_locations", "Multiple locations.",
       `${input.locationCount} locations were detected, increasing call-routing complexity.`,

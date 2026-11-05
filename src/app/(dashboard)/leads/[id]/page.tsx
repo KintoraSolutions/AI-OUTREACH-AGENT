@@ -6,6 +6,7 @@ import {
   Users,
   Link2,
   BarChart3,
+  Ban,
 } from "lucide-react";
 import { Role } from "@prisma/client";
 import { prisma } from "@/lib/db";
@@ -25,6 +26,8 @@ import {
   type DraftVersionView,
 } from "@/components/app/draft-panel";
 import { GmailDraftSection } from "@/components/app/gmail-draft-section";
+import { DecisionMakersCard } from "@/components/app/decision-makers-card";
+import { rankPeople, scorePerson } from "@/lib/people/scoring";
 import { PageHeader } from "@/components/app/page-header";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -51,16 +54,23 @@ import {
 function Detail({ label, value }: { label: string; value: React.ReactNode }) {
   return (
     <div className="flex flex-col gap-0.5">
-      <dt className="text-xs text-muted-foreground">{label}</dt>
-      <dd className="text-sm">{value || <span className="text-muted-foreground">—</span>}</dd>
+      <dt className="text-caption1 text-[var(--fl-fg-3)]">{label}</dt>
+      <dd className="text-body1">
+        {value || <span className="text-[var(--fl-fg-4)]">—</span>}
+      </dd>
     </div>
   );
 }
 
 function ExternalLink({ href }: { href: string | null }) {
-  if (!href) return <span className="text-muted-foreground">—</span>;
+  if (!href) return <span className="text-[var(--fl-fg-4)]">—</span>;
   return (
-    <a href={href} target="_blank" rel="noopener noreferrer" className="text-primary hover:underline break-all">
+    <a
+      href={href}
+      target="_blank"
+      rel="noopener noreferrer"
+      className="break-all rounded-sm text-[var(--fl-brand-text)] hover:underline"
+    >
       {href}
     </a>
   );
@@ -77,6 +87,24 @@ export default async function LeadDetailPage({ params }: { params: Promise<{ id:
     where: { id, orgId: ctx.orgId },
     include: {
       contacts: { orderBy: { isDecisionMaker: "desc" } },
+      // People this clinic publishes, with their other affiliations so a
+      // multi-clinic physician is visible from any one of their clinics.
+      affiliations: {
+        orderBy: { confidence: "desc" },
+        take: 25,
+        include: {
+          person: {
+            include: {
+              contacts: { select: { email: true }, where: { email: { not: null } }, take: 1 },
+              findings: { select: { code: true, confidence: true, isFact: true, dismissed: true } },
+              affiliations: {
+                select: { clinic: { select: { id: true, name: true } } },
+                take: 10,
+              },
+            },
+          },
+        },
+      },
       locations: { orderBy: { collectedAt: "asc" } },
       sources: { orderBy: { retrievedAt: "desc" } },
       followUps: {
@@ -100,11 +128,54 @@ export default async function LeadDetailPage({ params }: { params: Promise<{ id:
 
   if (!clinic) notFound();
 
-  const auditLog = await prisma.auditLogEntry.findMany({
-    where: { orgId: ctx.orgId, clinicId: clinic.id },
-    orderBy: { createdAt: "desc" },
-    take: 50,
-  });
+  // Decision makers, with each person's OTHER clinics only: listing this one
+  // back to the operator who is already looking at it is noise.
+  // Scored with scorePerson, which is a separate engine from scoreClinic on
+  // purpose: a person's score measures influence and reachability, a clinic's
+  // measures opportunity, and the two must never be summed.
+  const decisionMakers = rankPeople(
+    clinic.affiliations.map((affiliation) => ({
+      id: affiliation.person.id,
+      fullName: affiliation.person.fullName,
+      role: affiliation.role,
+      roleTitle: affiliation.roleTitle,
+      confidence: affiliation.confidence,
+      isOwner: affiliation.isOwner,
+      email: affiliation.person.contacts[0]?.email ?? null,
+      sourceUrl: affiliation.sourceUrl,
+      score: scorePerson(affiliation.person.findings),
+      otherClinics: affiliation.person.affiliations
+        .map((other) => other.clinic)
+        .filter((other) => other.id !== clinic.id),
+    })),
+  );
+
+  // Everything below depends only on the loaded clinic (and sync-derived values),
+  // so fetch it in one parallel batch instead of a serial waterfall of ~5 awaits.
+  const draftRow = clinic.drafts[0];
+  const googleConfigured = isProviderConfigured("google_integrations");
+  const now = new Date();
+
+  const [auditLog, gmailDraftView, gmailConnection, memberRows, calendarConnection] =
+    await Promise.all([
+      prisma.auditLogEntry.findMany({
+        where: { orgId: ctx.orgId, clinicId: clinic.id },
+        orderBy: { createdAt: "desc" },
+        take: 50,
+      }),
+      draftRow ? getGmailDraftForEmailDraft(draftRow.id) : Promise.resolve(null),
+      draftRow && googleConfigured
+        ? getUsableConnection(ctx.orgId, ctx.userId, "gmail")
+        : Promise.resolve(null),
+      prisma.membership.findMany({
+        where: { orgId: ctx.orgId },
+        include: { user: { select: { id: true, name: true, email: true } } },
+      }),
+      googleConfigured
+        ? getUsableConnection(ctx.orgId, ctx.userId, "calendar")
+        : Promise.resolve(null),
+    ]);
+  const calendarConnected = calendarConnection != null;
 
   const scoreRow = clinic.scores[0];
   const scoreView: ScoreView | null = scoreRow
@@ -153,7 +224,6 @@ export default async function LeadDetailPage({ params }: { params: Promise<{ id:
   }));
 
   const ai = describeAiProvider();
-  const draftRow = clinic.drafts[0];
   const draftView: DraftView | null = draftRow
     ? {
         id: draftRow.id,
@@ -201,18 +271,7 @@ export default async function LeadDetailPage({ params }: { params: Promise<{ id:
     reason: v.reason,
   }));
 
-  // Gmail integration state for the draft card (no tokens are ever exposed).
-  const googleConfigured = isProviderConfigured("google_integrations");
-  const gmailDraftView = draftRow ? await getGmailDraftForEmailDraft(draftRow.id) : null;
-  const gmailConnection =
-    draftRow && googleConfigured ? await getUsableConnection(ctx.orgId, ctx.userId, "gmail") : null;
-
-  // Follow-up management data.
-  const now = new Date();
-  const memberRows = await prisma.membership.findMany({
-    where: { orgId: ctx.orgId },
-    include: { user: { select: { id: true, name: true, email: true } } },
-  });
+  // Follow-up management data (member list fetched in the parallel batch above).
   const followUpMembers = memberRows.map((m) => ({
     id: m.user.id,
     name: m.user.name ?? m.user.email,
@@ -228,8 +287,6 @@ export default async function LeadDetailPage({ params }: { params: Promise<{ id:
     calendarStatus: f.calendarStatus,
     overdue: f.status === "PENDING" && f.dueDate < now,
   }));
-  const calendarConnected =
-    googleConfigured && (await getUsableConnection(ctx.orgId, ctx.userId, "calendar")) != null;
 
   return (
     <div className="space-y-6">
@@ -251,11 +308,25 @@ export default async function LeadDetailPage({ params }: { params: Promise<{ id:
         }
       />
 
-      <div className="flex flex-wrap items-center gap-4 rounded-lg border px-4 py-3">
+      {/* Surfaced ABOVE the fold. This warning used to sit at the very bottom
+          of a page roughly six cards tall, so the one fact that should stop you
+          from drafting outreach was the last thing you could possibly read. */}
+      {clinic.doNotContact ? (
+        <Alert variant="destructive">
+          <Ban className="size-4" aria-hidden="true" />
+          <AlertTitle>Do not contact</AlertTitle>
+          <AlertDescription>
+            This clinic is marked do-not-contact and is excluded from outreach. Approving a draft
+            will not create a Gmail draft for it.
+          </AlertDescription>
+        </Alert>
+      ) : null}
+
+      <div className="flex flex-wrap items-center gap-4 rounded-md border border-[var(--fl-stroke-2)] bg-[var(--fl-bg-1)] px-4 py-3 shadow-2">
         <StageBadge stage={clinic.stage} />
         {clinic.isTestData ? <Badge tone="neutral">Test data</Badge> : null}
         {clinic.doNotContact ? <Badge tone="danger">Do not contact</Badge> : null}
-        <span className="text-xs text-muted-foreground">
+        <span className="text-caption1 text-[var(--fl-fg-3)]">
           Source: {LEAD_SOURCE_LABELS[clinic.leadSource]}
         </span>
         {canEdit ? (
@@ -287,12 +358,14 @@ export default async function LeadDetailPage({ params }: { params: Promise<{ id:
                 <Detail label="Added" value={formatDate(clinic.createdAt)} />
                 <Detail label="Follow-up date" value={formatDate(clinic.followUpDate)} />
               </dl>
-              <p className="mt-4 text-xs text-muted-foreground">
+              <p className="mt-4 text-caption1 text-[var(--fl-fg-3)]">
                 Confidence: fields entered manually or via CSV are self-reported and unverified until
                 the research engine confirms them.
               </p>
             </CardContent>
           </Card>
+
+          <DecisionMakersCard people={decisionMakers} />
 
           {scoreView ? (
             <ScoreCard view={scoreView} clinicId={clinic.id} canEdit={canEdit} canManage={canManage} />
@@ -344,7 +417,9 @@ export default async function LeadDetailPage({ params }: { params: Promise<{ id:
             </CardContent>
           </Card>
 
-          <Card>
+          {/* Raised: this is the action the whole page builds toward, and it was
+              visually identical to the five reference cards around it. */}
+          <Card elevation="raised" id="email-draft" className="scroll-mt-20">
             <CardHeader>
               <CardTitle>Email draft</CardTitle>
             </CardHeader>
@@ -357,6 +432,8 @@ export default async function LeadDetailPage({ params }: { params: Promise<{ id:
                 aiModel={ai.model}
                 canEdit={canEdit}
                 canApprove={canManage}
+                googleConfigured={googleConfigured}
+                gmailConnected={gmailConnection != null}
               />
               {draftView ? (
                 <div className="mt-4">
@@ -407,19 +484,26 @@ export default async function LeadDetailPage({ params }: { params: Promise<{ id:
               {clinic.contacts.length > 0 ? (
                 <ul className="space-y-3">
                   {clinic.contacts.map((c) => (
-                    <li key={c.id} className="rounded-md border p-3 text-sm">
+                    <li
+                      key={c.id}
+                      className="rounded-md border border-[var(--fl-stroke-2)] p-3 text-body1"
+                    >
                       <div className="flex items-center justify-between gap-2">
-                        <span className="font-medium">{c.name ?? "Unnamed contact"}</span>
+                        <span className="font-semibold">{c.name ?? "Unnamed contact"}</span>
                         {c.isDecisionMaker ? <Badge tone="info">Decision maker</Badge> : null}
                       </div>
-                      {c.jobTitle ? <p className="text-muted-foreground">{c.jobTitle}</p> : null}
+                      {c.jobTitle ? (
+                        <p className="text-[var(--fl-fg-2)]">{c.jobTitle}</p>
+                      ) : null}
                       {c.email ? (
-                        <p className="text-muted-foreground">
+                        <p className="text-[var(--fl-fg-2)]">
                           {c.email}{" "}
-                          <span className="text-xs">({EMAIL_STATUS_LABELS[c.emailStatus]})</span>
+                          <span className="text-caption1">
+                            ({EMAIL_STATUS_LABELS[c.emailStatus]})
+                          </span>
                         </p>
                       ) : null}
-                      {c.phone ? <p className="text-muted-foreground">{c.phone}</p> : null}
+                      {c.phone ? <p className="text-[var(--fl-fg-2)]">{c.phone}</p> : null}
                     </li>
                   ))}
                 </ul>
@@ -427,8 +511,8 @@ export default async function LeadDetailPage({ params }: { params: Promise<{ id:
                 <EmptyState icon={Users} title="No contacts" />
               )}
               {canEdit ? (
-                <details className="rounded-md border p-3">
-                  <summary className="cursor-pointer text-sm font-medium">Add contact</summary>
+                <details className="rounded-md border border-[var(--fl-stroke-2)] p-3">
+                  <summary className="cursor-pointer text-body1 font-semibold">Add contact</summary>
                   <div className="mt-3">
                     <AddContactForm clinicId={clinic.id} />
                   </div>
@@ -445,10 +529,13 @@ export default async function LeadDetailPage({ params }: { params: Promise<{ id:
               {clinic.locations.length > 0 ? (
                 <ul className="space-y-2">
                   {clinic.locations.map((l) => (
-                    <li key={l.id} className="rounded-md border p-3 text-sm">
-                      {l.label ? <p className="font-medium">{l.label}</p> : null}
-                      <p className="text-muted-foreground">{l.address ?? "No address"}</p>
-                      {l.phone ? <p className="text-muted-foreground">{l.phone}</p> : null}
+                    <li
+                      key={l.id}
+                      className="rounded-md border border-[var(--fl-stroke-2)] p-3 text-body1"
+                    >
+                      {l.label ? <p className="font-semibold">{l.label}</p> : null}
+                      <p className="text-[var(--fl-fg-2)]">{l.address ?? "No address"}</p>
+                      {l.phone ? <p className="text-[var(--fl-fg-2)]">{l.phone}</p> : null}
                     </li>
                   ))}
                 </ul>
@@ -456,8 +543,8 @@ export default async function LeadDetailPage({ params }: { params: Promise<{ id:
                 <EmptyState icon={MapPin} title="No locations" />
               )}
               {canEdit ? (
-                <details className="rounded-md border p-3">
-                  <summary className="cursor-pointer text-sm font-medium">Add location</summary>
+                <details className="rounded-md border border-[var(--fl-stroke-2)] p-3">
+                  <summary className="cursor-pointer text-body1 font-semibold">Add location</summary>
                   <div className="mt-3">
                     <AddLocationForm clinicId={clinic.id} />
                   </div>
@@ -488,11 +575,11 @@ export default async function LeadDetailPage({ params }: { params: Promise<{ id:
             </CardHeader>
             <CardContent>
               {clinic.sources.length > 0 ? (
-                <ul className="space-y-2 text-sm">
+                <ul className="space-y-2 text-body1">
                   {clinic.sources.map((s) => (
                     <li key={s.id}>
                       <ExternalLink href={s.url} />
-                      <span className="ml-1 text-xs text-muted-foreground">
+                      <span className="ml-1 text-caption1 text-[var(--fl-fg-3)]">
                         ({s.type}, {formatDate(s.retrievedAt)})
                       </span>
                     </li>
@@ -506,14 +593,6 @@ export default async function LeadDetailPage({ params }: { params: Promise<{ id:
         </div>
       </div>
 
-      {clinic.doNotContact ? (
-        <Alert variant="warning">
-          <AlertTitle>Do-not-contact</AlertTitle>
-          <AlertDescription>
-            This clinic is marked do-not-contact and is excluded from outreach.
-          </AlertDescription>
-        </Alert>
-      ) : null}
     </div>
   );
 }
